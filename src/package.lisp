@@ -49,10 +49,10 @@
    ;; IRC message structure
    #:irc-message
    #:make-irc-message
-   #:message-tags
-   #:message-source
-   #:message-command
-   #:message-params
+   #:irc-message-tags
+   #:irc-message-source
+   #:irc-message-command
+   #:irc-message-params
    ;; Parsing and formatting
    #:parse-message
    #:format-message
@@ -60,10 +60,13 @@
    #:parse-tags
    #:format-tags
    ;; Source parsing
+   #:irc-source
+   #:make-irc-source
+   #:irc-source-nick
+   #:irc-source-user
+   #:irc-source-host
    #:parse-source
    #:source-nick
-   #:source-user
-   #:source-host
    ;; Common message constructors
    #:irc-pass
    #:irc-nick
@@ -92,9 +95,10 @@
    #:buffer-count
    ;; Stored message
    #:stored-message
-   #:stored-time
-   #:stored-raw
-   #:stored-msgid))
+   #:make-stored-message
+   #:stored-message-time
+   #:stored-message-raw
+   #:stored-message-msgid))
 
 (defpackage #:cloak.upstream
   (:use #:cl #:cloak.protocol)
@@ -137,6 +141,7 @@
                     (#:alex #:alexandria))
   (:export
    ;; Core bouncer
+   #:*bouncer*
    #:bouncer
    #:make-bouncer
    #:start-bouncer

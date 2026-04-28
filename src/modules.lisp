@@ -39,19 +39,19 @@ Return :halt to prevent further processing.")
 
 ;;; --- Module Registry ---
 
-(defvar *modules* (make-hash-table :test 'equal)
+(defvar *module-registry* (make-hash-table :test 'equal)
   "Registry of available module classes by name.")
 
-(defvar *active-modules* nil
+(defvar *active-module-list* nil
   "List of active module instances.")
 
 (defun register-module (name class)
   "Register a module CLASS under NAME."
-  (setf (gethash name *modules*) class))
+  (setf (gethash name *module-registry*) class))
 
 (defun find-module (name)
   "Find a registered module by NAME."
-  (gethash name *modules*))
+  (gethash name *module-registry*))
 
 (defun load-module (name bouncer)
   "Instantiate and load module NAME into BOUNCER."
@@ -59,14 +59,14 @@ Return :halt to prevent further processing.")
     (when class
       (let ((module (make-instance class :name name)))
         (on-load module bouncer)
-        (push module *active-modules*)
+        (push module *active-module-list*)
         module))))
 
 (defun unload-module (name bouncer)
   "Unload module NAME from BOUNCER."
-  (let ((module (find name *active-modules*
+  (let ((module (find name *active-module-list*
                       :key #'module-name :test #'string-equal)))
     (when module
       (on-unload module bouncer)
-      (setf *active-modules* (remove module *active-modules*))
+      (setf *active-module-list* (remove module *active-module-list*))
       t)))
