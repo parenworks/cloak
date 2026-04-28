@@ -130,6 +130,8 @@
    #:client-authenticated-p
    #:client-network
    #:client-last-playback
+   #:client-message-handler
+   #:client-disconnect-handler
    ;; Listener
    #:start-listener
    #:stop-listener))

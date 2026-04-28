@@ -244,7 +244,7 @@ Buffer it and relay to any attached clients."
   (let ((command (cloak.protocol:irc-message-command msg)))
     (when (string= command "USER")
       ;; Try to authenticate - PASS should contain user/network:password
-      (let* ((pass-data (or (slot-value client 'user) ""))
+      (let* ((pass-data (or (client-user client) ""))
              (slash-pos (position #\/ pass-data))
              (colon-pos (position #\: pass-data :from-end t)))
         (if (and slash-pos colon-pos (< slash-pos colon-pos))

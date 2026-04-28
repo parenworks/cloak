@@ -46,7 +46,7 @@
     (ignore-errors (close (client-stream client)))
     (setf (client-stream client) nil))
   (when (client-socket client)
-    (ignore-errors (usocket:socket-close (client-socket client)))
+    (ignore-errors (close (client-socket client)))
     (setf (client-socket client) nil))
   (when (client-disconnect-handler client)
     (funcall (client-disconnect-handler client) client)))
@@ -112,24 +112,28 @@
 ON-CONNECT is called with each new downstream-client."
   (format t "[CLoak] Starting listener on ~a:~d~a~%"
           host port (if tls-cert " (TLS)" ""))
-  (setf *listener-socket*
-        (usocket:socket-listen host port
-                               :reuse-address t
-                               :element-type '(unsigned-byte 8)
-                               :backlog 5))
-  (setf *listener-thread*
-        (bt:make-thread
-         (lambda ()
-           (listener--accept-loop *listener-socket*
-                                  :tls-cert tls-cert
-                                  :tls-key tls-key
-                                  :on-connect on-connect))
-         :name "cloak-listener")))
+  (let ((sock (iolib:make-socket :connect :passive
+                                 :address-family :internet
+                                 :type :stream
+                                 :external-format '(:utf-8 :eol-style :crlf)
+                                 :ipv6 nil)))
+    (setf (iolib:socket-option sock :reuse-address) t)
+    (iolib:bind-address sock (iolib:lookup-hostname host) :port port)
+    (iolib:listen-on sock :backlog 5)
+    (setf *listener-socket* sock)
+    (setf *listener-thread*
+          (bt:make-thread
+           (lambda ()
+             (listener--accept-loop *listener-socket*
+                                    :tls-cert tls-cert
+                                    :tls-key tls-key
+                                    :on-connect on-connect))
+           :name "cloak-listener"))))
 
 (defun stop-listener ()
   "Stop the client listener."
   (when *listener-socket*
-    (ignore-errors (usocket:socket-close *listener-socket*))
+    (ignore-errors (close *listener-socket*))
     (setf *listener-socket* nil))
   (format t "[CLoak] Listener stopped~%"))
 
@@ -138,25 +142,25 @@ ON-CONNECT is called with each new downstream-client."
   (handler-case
       (loop while server-socket
             for client-sock = (handler-case
-                                  (usocket:socket-accept server-socket)
-                                (error () nil))
+                                  (iolib:accept-connection server-socket :wait t)
+                                (error (e)
+                                  (format t "[CLoak] Accept wait error: ~a~%" e)
+                                  (force-output)
+                                  nil))
             when client-sock
               do (handler-case
-                     (let* ((raw-stream (usocket:socket-stream client-sock))
-                            (stream (if tls-cert
-                                        (cl+ssl:make-ssl-server-stream
-                                         raw-stream
-                                         :certificate tls-cert
-                                         :key tls-key
-                                         :external-format :utf-8)
-                                        (flexi-streams:make-flexi-stream
-                                         raw-stream
-                                         :external-format :utf-8)))
+                     (let* ((stream (if tls-cert
+                                       (cl+ssl:make-ssl-server-stream
+                                        client-sock
+                                        :certificate tls-cert
+                                        :key tls-key)
+                                       client-sock))
                             (client (make-instance 'downstream-client
                                       :socket client-sock
                                       :stream stream)))
                        (format t "[CLoak] Client connected from ~a~%"
-                               (usocket:get-peer-address client-sock))
+                               (iolib:remote-host client-sock))
+                       (force-output)
                        ;; Start client read thread
                        (setf (client-read-thread client)
                              (bt:make-thread
@@ -167,6 +171,7 @@ ON-CONNECT is called with each new downstream-client."
                          (funcall on-connect client)))
                    (error (e)
                      (format t "[CLoak] Accept error: ~a~%" e)
-                     (ignore-errors (usocket:socket-close client-sock)))))
+                     (force-output)
+                     (ignore-errors (close client-sock)))))
     (error (e)
       (format t "[CLoak] Listener error: ~a~%" e))))

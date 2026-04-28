@@ -11,7 +11,7 @@ connections to IRC networks and relays traffic to/from multiple clients.
 Features include IRCv3 support, SASL authentication, message buffering
 with per-client playback, TLS on both sides, and a live web admin panel
 built with Fluxion."
-  :depends-on ("usocket"
+  :depends-on ("iolib"
                "bordeaux-threads"
                "cl+ssl"
                "flexi-streams"

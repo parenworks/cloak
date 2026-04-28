@@ -57,19 +57,20 @@
         (progn
           (format t "~&[CLoak] Connecting to ~a:~d~a...~%"
                   server port (if use-tls " (TLS)" ""))
-          (let ((sock (usocket:socket-connect server port
-                                              :element-type '(unsigned-byte 8))))
+          (let ((sock (iolib:make-socket :connect :active
+                                          :address-family :internet
+                                          :type :stream
+                                          :external-format '(:utf-8 :eol-style :crlf)
+                                          :ipv6 nil)))
+            (iolib:connect sock (iolib:lookup-hostname server) :port port :wait t)
             (setf (upstream-socket upstream) sock)
-            (let ((raw-stream (usocket:socket-stream sock)))
-              (setf (upstream-stream upstream)
-                    (if use-tls
-                        (cl+ssl:make-ssl-client-stream
-                         raw-stream
-                         :hostname server
-                         :external-format :utf-8)
-                        (flexi-streams:make-flexi-stream
-                         raw-stream
-                         :external-format :utf-8)))
+            (let ((stream (if use-tls
+                             (cl+ssl:make-ssl-client-stream
+                              (iolib:socket-os-fd sock)
+                              :hostname server
+                              :external-format '(:utf-8 :eol-style :crlf))
+                             sock)))
+              (setf (upstream-stream upstream) stream)
               (setf (upstream-state upstream) :registering)
               (setf (upstream-last-activity upstream) (get-universal-time))
               ;; Start registration
@@ -96,7 +97,7 @@
       (ignore-errors (close (upstream-stream upstream)))
       (setf (upstream-stream upstream) nil))
     (when (upstream-socket upstream)
-      (ignore-errors (usocket:socket-close (upstream-socket upstream)))
+      (ignore-errors (close (upstream-socket upstream)))
       (setf (upstream-socket upstream) nil))))
 
 (defun upstream-connected-p (upstream)
@@ -118,7 +119,9 @@
         (error (e)
           (format t "[CLoak] Send error on ~a: ~a~%"
                   (upstream-network-name upstream) e)
-          (upstream-disconnect upstream))))))
+          (force-output)
+          ;; Don't call disconnect here (would deadlock on lock)
+          (setf (upstream-state upstream) :disconnected))))))
 
 ;;; --- Registration ---
 
