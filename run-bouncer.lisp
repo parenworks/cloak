@@ -19,7 +19,7 @@
         :users (list
                 (make-instance 'cloak.config:user-config
                   :name "glenn"
-                  :password-hash "test"
+                  :password-hash (cloak.config:hash-password "test")
                   :admin-p t
                   :networks (list
                              (make-instance 'cloak.config:network-config

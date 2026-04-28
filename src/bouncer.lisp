@@ -69,6 +69,21 @@ Buffer it and relay to any attached clients."
   (let* ((network-name (upstream-network-name upstream))
          (command (cloak.protocol:irc-message-command msg))
          (target (bouncer--message-target msg (upstream-nick upstream))))
+    ;; Handle CTCP VERSION requests
+    (when (and (string= command "PRIVMSG")
+               (let ((text (second (cloak.protocol:irc-message-params msg))))
+                 (and text
+                      (> (length text) 2)
+                      (char= (char text 0) #\Soh)
+                      (search "VERSION" text))))
+      (let ((sender (cloak.protocol:source-nick
+                     (cloak.protocol:irc-message-source msg))))
+        (when sender
+          (upstream-send upstream
+                         (format nil "NOTICE ~a :~aCLoak v~a - Common Lisp IRC Bouncer~a"
+                                 sender (string #\Soh)
+                                 (asdf:component-version (asdf:find-system "cloak"))
+                                 (string #\Soh))))))
     ;; Buffer messages that clients need to see
     (when (member command '("PRIVMSG" "NOTICE" "JOIN" "PART" "QUIT"
                             "KICK" "TOPIC" "MODE" "NICK")
@@ -132,15 +147,23 @@ Buffer it and relay to any attached clients."
                                       (upstream-nick upstream)
                                       user-name chan)))
                (upstream-channels upstream))
+      ;; Clear AWAY now that a client is attached
+      (bouncer--set-away bouncer client network-name nil)
       ;; Playback buffered messages
       (playback-buffer bouncer client user-name network-name))))
 
 (defun detach-client (bouncer client)
   "Detach CLIENT from BOUNCER."
-  (bt:with-lock-held ((bouncer-lock bouncer))
-    (setf (bouncer-clients bouncer)
-          (remove client (bouncer-clients bouncer))))
-  (format t "[CLoak] Client detached~%"))
+  (let ((network (client-network client)))
+    (bt:with-lock-held ((bouncer-lock bouncer))
+      (setf (bouncer-clients bouncer)
+            (remove client (bouncer-clients bouncer)))
+      ;; Set AWAY if no clients remain for this network
+      (unless (find network (bouncer-clients bouncer)
+                    :key #'client-network :test #'string-equal)
+        (bouncer--set-away bouncer client network t))))
+  (format t "[CLoak] Client detached~%")
+  (force-output))
 
 ;;; --- Client Message Handling ---
 
@@ -161,6 +184,21 @@ Buffer it and relay to any attached clients."
       ;; Everything else - forward to upstream
       (upstream
        (upstream-send upstream line)))))
+
+;;; --- Away Management ---
+
+(defun bouncer--set-away (bouncer client network-name away-p)
+  "Set or clear AWAY on the upstream for NETWORK-NAME.
+Finds the upstream using any user who owns that network."
+  (declare (ignore client))
+  (maphash (lambda (key upstream)
+             (declare (ignore key))
+             (when (and (string-equal (upstream-network-name upstream) network-name)
+                        (upstream-connected-p upstream))
+               (if away-p
+                   (upstream-send upstream "AWAY :Detached from CLoak")
+                   (upstream-send upstream "AWAY"))))
+           (bouncer-upstreams bouncer)))
 
 ;;; --- Playback ---
 
@@ -209,9 +247,10 @@ Buffer it and relay to any attached clients."
       (client-send client ":CLoak NOTICE * :Bouncer shutting down")
       (client-disconnect client))
     (setf (bouncer-clients bouncer) nil))
-  ;; Disconnect all upstreams
+  ;; Disconnect all upstreams (disable reconnect first)
   (maphash (lambda (key upstream)
              (declare (ignore key))
+             (setf (upstream-reconnect-p upstream) nil)
              (ignore-errors
                (upstream-send upstream
                               (cloak.protocol:irc-quit "CLoak shutting down"))
@@ -246,7 +285,7 @@ Buffer it and relay to any attached clients."
                    (password (subseq pass-data (1+ colon-pos)))
                    (user-cfg (find-user user-name (bouncer-config bouncer))))
               (if (and user-cfg
-                       (string= password (user-password-hash user-cfg)))
+                       (verify-password password (user-password-hash user-cfg)))
                   ;; Auth success
                   (progn
                     (format t "[CLoak] Authenticated: ~a -> ~a~%" user-name network)

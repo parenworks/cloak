@@ -183,6 +183,37 @@
     (format t "[CLoak] Edit the config file to set your password and nick.~%")
     config))
 
+;;; --- Password Hashing ---
+
+(defun hash-password (password)
+  "Hash PASSWORD using SHA256 with a random salt.
+Returns a string in the format \"sha256:salt:hash\"."
+  (let* ((salt-bytes (ironclad:random-data 16))
+         (salt-hex (ironclad:byte-array-to-hex-string salt-bytes))
+         (digest (ironclad:digest-sequence
+                  :sha256
+                  (flexi-streams:string-to-octets
+                   (concatenate 'string salt-hex password)
+                   :external-format :utf-8)))
+         (hash-hex (ironclad:byte-array-to-hex-string digest)))
+    (format nil "sha256:~a:~a" salt-hex hash-hex)))
+
+(defun verify-password (password hash-string)
+  "Verify PASSWORD against HASH-STRING (format: \"sha256:salt:hash\").
+Returns T if the password matches."
+  (let* ((parts (split-sequence:split-sequence #\: hash-string :count 3))
+         (method (first parts))
+         (salt (second parts))
+         (stored-hash (third parts)))
+    (when (and (string= method "sha256") salt stored-hash)
+      (let* ((digest (ironclad:digest-sequence
+                      :sha256
+                      (flexi-streams:string-to-octets
+                       (concatenate 'string salt password)
+                       :external-format :utf-8)))
+             (computed (ironclad:byte-array-to-hex-string digest)))
+        (string= computed stored-hash)))))
+
 ;;; --- Lookups ---
 
 (defun find-user (name &optional (config *config*))

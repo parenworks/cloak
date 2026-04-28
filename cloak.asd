@@ -19,6 +19,7 @@ built with Fluxion."
                "split-sequence"
                "cl-ppcre"
                "alexandria"
+               "ironclad"
                "local-time"
                "cl-json"
                "fluxion")

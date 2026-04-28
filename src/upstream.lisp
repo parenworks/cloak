@@ -24,6 +24,10 @@
    ;; Health
    (last-activity :initform (get-universal-time) :accessor upstream-last-activity)
    (ping-pending :initform nil :accessor upstream-ping-pending)
+   ;; Reconnect
+   (reconnect-p :initform t :accessor upstream-reconnect-p
+                :documentation "If T, automatically reconnect on disconnect.")
+   (reconnect-attempts :initform 0 :accessor upstream-reconnect-attempts)
    ;; Threading
    (read-thread :initform nil :accessor upstream-read-thread)
    (lock :initform (bt:make-lock "upstream-lock") :accessor upstream-lock)
@@ -159,7 +163,11 @@
               (upstream-network-name upstream) e)))
   ;; Cleanup
   (upstream-disconnect upstream)
-  (format t "[CLoak] Upstream ~a disconnected~%" (upstream-network-name upstream)))
+  (format t "[CLoak] Upstream ~a disconnected~%" (upstream-network-name upstream))
+  (force-output)
+  ;; Auto-reconnect
+  (when (upstream-reconnect-p upstream)
+    (upstream--reconnect-loop upstream)))
 
 (defun upstream--handle-line (upstream line)
   "Parse and handle a raw IRC LINE from the server."
@@ -285,6 +293,33 @@
              (payload (format nil "~a~c~a~c~a" nick #\Nul nick #\Nul password))
              (encoded (cl-base64:string-to-base64-string payload)))
         (upstream-send upstream (format nil "AUTHENTICATE ~a" encoded))))))
+
+;;; --- Reconnect ---
+
+(defun calculate-backoff (attempt &key (initial 2) (max 300) (jitter nil))
+  "Calculate reconnect delay for ATTEMPT using exponential backoff.
+Starts at INITIAL seconds, doubles each attempt, caps at MAX.
+If JITTER is T, adds random jitter between base and 1.5x base."
+  (let ((base (min max (* initial (expt 2 attempt)))))
+    (if jitter
+        (+ base (random (1+ (floor base 2))))
+        base)))
+
+(defun upstream--reconnect-loop (upstream)
+  "Attempt to reconnect UPSTREAM with exponential backoff."
+  (loop while (upstream-reconnect-p upstream)
+        for attempt = (upstream-reconnect-attempts upstream)
+        for delay = (calculate-backoff attempt :jitter t)
+        do (format t "[CLoak] Reconnecting ~a in ~d seconds (attempt ~d)~%"
+                   (upstream-network-name upstream) delay (1+ attempt))
+           (force-output)
+           (sleep delay)
+           (when (upstream-reconnect-p upstream)
+             (if (upstream-connect upstream)
+                 (progn
+                   (setf (upstream-reconnect-attempts upstream) 0)
+                   (return))
+                 (incf (upstream-reconnect-attempts upstream))))))
 
 (defun upstream--track-state (upstream msg)
   "Update internal state from MSG (nick changes, channel tracking, etc.)."

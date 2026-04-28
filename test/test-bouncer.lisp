@@ -1,11 +1,72 @@
-;;;; test/test-bouncer.lisp - Bouncer integration tests (stubs)
+;;;; test/test-bouncer.lisp - Bouncer and upstream tests
 
 (in-package #:cloak.test)
 
 (in-suite :cloak-tests)
 
-;; Integration tests will be added as features stabilize.
-;; These require mock sockets or a local IRC server.
+;;; --- Reconnect backoff tests ---
+
+(test backoff-initial-delay
+  "First reconnect attempt uses initial delay."
+  (is (= 2 (cloak.upstream:calculate-backoff 0 :initial 2 :max 300))))
+
+(test backoff-exponential-growth
+  "Delay doubles each attempt."
+  (is (= 2 (cloak.upstream:calculate-backoff 0 :initial 2 :max 300)))
+  (is (= 4 (cloak.upstream:calculate-backoff 1 :initial 2 :max 300)))
+  (is (= 8 (cloak.upstream:calculate-backoff 2 :initial 2 :max 300)))
+  (is (= 16 (cloak.upstream:calculate-backoff 3 :initial 2 :max 300))))
+
+(test backoff-capped-at-max
+  "Delay never exceeds max."
+  (is (= 300 (cloak.upstream:calculate-backoff 20 :initial 2 :max 300)))
+  (is (= 60 (cloak.upstream:calculate-backoff 20 :initial 2 :max 60))))
+
+(test backoff-jitter-range
+  "Jittered backoff stays within expected range."
+  (let ((results (loop repeat 50
+                       collect (cloak.upstream:calculate-backoff 3 :initial 2 :max 300 :jitter t))))
+    (is (every (lambda (r) (and (>= r 8) (<= r 24))) results))))
+
+;;; --- CTCP parsing tests ---
+
+(test ctcp-version-detection
+  "CTCP VERSION is detected in a PRIVMSG."
+  (let* ((soh (string (code-char 1)))
+         (raw (format nil ":nick!user@host PRIVMSG cloak-test :~aVERSION~a" soh soh))
+         (msg (cloak.protocol:parse-message raw)))
+    (is (string= "PRIVMSG" (cloak.protocol:irc-message-command msg)))
+    (let ((text (second (cloak.protocol:irc-message-params msg))))
+      (is (char= (code-char 1) (char text 0)))
+      (is (char= (code-char 1) (char text (1- (length text))))))))
+
+;;; --- Password hashing tests ---
+
+(test password-hash-roundtrip
+  "Hashed password verifies correctly."
+  (let ((hash (cloak.config:hash-password "secret123")))
+    (is (cloak.config:verify-password "secret123" hash))
+    (is (not (cloak.config:verify-password "wrong" hash)))))
+
+(test password-hash-unique-salts
+  "Different calls produce different hashes for same password."
+  (let ((h1 (cloak.config:hash-password "secret123"))
+        (h2 (cloak.config:hash-password "secret123")))
+    (is (not (string= h1 h2)))
+    (is (cloak.config:verify-password "secret123" h1))
+    (is (cloak.config:verify-password "secret123" h2))))
+
+;;; --- *status command tests ---
+
+(test status-parse-command
+  "Parse *status commands from PRIVMSG."
+  (let ((msg (cloak.protocol:parse-message
+              ":testclient PRIVMSG *status :help")))
+    (is (string= "PRIVMSG" (cloak.protocol:irc-message-command msg)))
+    (is (string= "*status" (first (cloak.protocol:irc-message-params msg))))
+    (is (string= "help" (second (cloak.protocol:irc-message-params msg))))))
+
+;;; --- Config roundtrip ---
 
 (test config-roundtrip
   "Config can be serialized and deserialized."

@@ -41,7 +41,10 @@
    #:save-config
    #:generate-default-config
    #:find-user
-   #:find-network))
+   #:find-network
+   ;; Password hashing
+   #:hash-password
+   #:verify-password))
 
 (defpackage #:cloak.protocol
   (:use #:cl)
@@ -114,7 +117,9 @@
    #:upstream-nick
    #:upstream-network-name
    #:upstream-channels
-   #:upstream-cap-enabled))
+   #:upstream-cap-enabled
+   #:upstream-reconnect-p
+   #:calculate-backoff))
 
 (defpackage #:cloak.downstream
   (:use #:cl #:cloak.protocol)
