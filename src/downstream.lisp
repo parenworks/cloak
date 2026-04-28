@@ -118,7 +118,11 @@ ON-CONNECT is called with each new downstream-client."
                                  :external-format '(:utf-8 :eol-style :crlf)
                                  :ipv6 nil)))
     (setf (iolib:socket-option sock :reuse-address) t)
-    (iolib:bind-address sock (iolib:lookup-hostname host) :port port)
+    (iolib:bind-address sock
+                        (if (string= host "0.0.0.0")
+                            iolib:+ipv4-unspecified+
+                            (iolib:lookup-hostname host))
+                        :port port)
     (iolib:listen-on sock :backlog 5)
     (setf *listener-socket* sock)
     (setf *listener-thread*

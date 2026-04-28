@@ -14,7 +14,8 @@
    (buffers :initform (make-hash-table :test 'equal) :accessor bouncer-buffers
             :documentation "Hash: \"user/network/target\" -> message-buffer")
    (lock :initform (bt:make-lock "bouncer-lock") :accessor bouncer-lock)
-   (running-p :initform nil :accessor bouncer-running-p))
+   (running-p :initform nil :accessor bouncer-running-p)
+   (start-time :initform (get-universal-time) :accessor bouncer-start-time))
   (:documentation "The core CLoak bouncer instance."))
 
 (defvar *bouncer* nil "The active bouncer instance.")
@@ -181,6 +182,11 @@ Buffer it and relay to any attached clients."
        (client-send client
                     (cloak.protocol:irc-pong
                      (or (first (cloak.protocol:irc-message-params msg)) "CLoak"))))
+      ;; *status commands
+      ((and (string= command "PRIVMSG")
+            (let ((target (first (cloak.protocol:irc-message-params msg))))
+              (string-equal target "*status")))
+       (bouncer--handle-status bouncer user-name client msg))
       ;; Everything else - forward to upstream
       (upstream
        (upstream-send upstream line)))))
@@ -260,6 +266,132 @@ Finds the upstream using any user who owns that network."
   (stop-listener)
   (setf *bouncer* nil)
   (format t "[CLoak] Bouncer stopped~%"))
+
+;;; --- *status Commands ---
+
+(defun bouncer--status-reply (client text)
+  "Send a NOTICE from *status to CLIENT."
+  (client-send client (format nil ":*status!status@CLoak NOTICE ~a :~a"
+                               (or (client-nick client) "*") text)))
+
+(defun bouncer--handle-status (bouncer user-name client msg)
+  "Handle a /msg *status command from CLIENT."
+  (let* ((text (second (cloak.protocol:irc-message-params msg)))
+         (parts (and text (split-sequence:split-sequence #\Space text
+                            :remove-empty-subseqs t)))
+         (cmd (string-downcase (or (first parts) "")))
+         (args (rest parts)))
+    (cond
+      ((string= cmd "help")
+       (bouncer--status-reply client "CLoak bouncer commands:")
+       (bouncer--status-reply client "  help           - Show this help")
+       (bouncer--status-reply client "  version        - Show CLoak version")
+       (bouncer--status-reply client "  listnets       - List configured networks")
+       (bouncer--status-reply client "  listchans      - List joined channels")
+       (bouncer--status-reply client "  listclients    - List connected clients")
+       (bouncer--status-reply client "  connect <net>  - Connect to a network")
+       (bouncer--status-reply client "  disconnect <net> - Disconnect from a network")
+       (bouncer--status-reply client "  jump <net>     - Reconnect to a network")
+       (bouncer--status-reply client "  uptime         - Show bouncer uptime"))
+
+      ((string= cmd "version")
+       (bouncer--status-reply client
+        (format nil "CLoak v~a" (asdf:component-version (asdf:find-system "cloak")))))
+
+      ((string= cmd "listnets")
+       (let ((user-cfg (find-user user-name (bouncer-config bouncer))))
+         (if user-cfg
+             (dolist (net (user-networks user-cfg))
+               (let* ((key (bouncer--upstream-key user-name (network-name net)))
+                      (up (gethash key (bouncer-upstreams bouncer)))
+                      (status (if (and up (upstream-connected-p up)) "connected" "disconnected")))
+                 (bouncer--status-reply client
+                  (format nil "  ~a (~a:~d) [~a]"
+                          (network-name net) (network-server net)
+                          (network-port net) status))))
+             (bouncer--status-reply client "No networks configured."))))
+
+      ((string= cmd "listchans")
+       (let ((upstream (bouncer--get-upstream bouncer user-name
+                         (client-network client))))
+         (if (and upstream (> (hash-table-count (upstream-channels upstream)) 0))
+             (maphash (lambda (chan _v)
+                        (declare (ignore _v))
+                        (bouncer--status-reply client (format nil "  ~a" chan)))
+                      (upstream-channels upstream))
+             (bouncer--status-reply client "No channels joined."))))
+
+      ((string= cmd "listclients")
+       (bt:with-lock-held ((bouncer-lock bouncer))
+         (let ((count 0))
+           (dolist (c (bouncer-clients bouncer))
+             (when (string-equal (client-network c) (client-network client))
+               (incf count)
+               (bouncer--status-reply client
+                (format nil "  ~a [~a]" (or (client-nick c) "?")
+                        (client-network c)))))
+           (bouncer--status-reply client (format nil "~d client(s) attached." count)))))
+
+      ((string= cmd "connect")
+       (let ((net-name (first args)))
+         (if net-name
+             (let ((upstream (bouncer--get-upstream bouncer user-name net-name)))
+               (if upstream
+                   (if (upstream-connected-p upstream)
+                       (bouncer--status-reply client
+                        (format nil "Already connected to ~a." net-name))
+                       (progn
+                         (bouncer--status-reply client
+                          (format nil "Connecting to ~a..." net-name))
+                         (bt:make-thread
+                          (lambda () (upstream-connect upstream))
+                          :name "cloak-reconnect")))
+                   (bouncer--status-reply client
+                    (format nil "Unknown network: ~a" net-name))))
+             (bouncer--status-reply client "Usage: connect <network>"))))
+
+      ((string= cmd "disconnect")
+       (let ((net-name (first args)))
+         (if net-name
+             (let ((upstream (bouncer--get-upstream bouncer user-name net-name)))
+               (if upstream
+                   (progn
+                     (setf (upstream-reconnect-p upstream) nil)
+                     (upstream-disconnect upstream)
+                     (bouncer--status-reply client
+                      (format nil "Disconnected from ~a." net-name)))
+                   (bouncer--status-reply client
+                    (format nil "Unknown network: ~a" net-name))))
+             (bouncer--status-reply client "Usage: disconnect <network>"))))
+
+      ((string= cmd "jump")
+       (let ((net-name (first args)))
+         (if net-name
+             (let ((upstream (bouncer--get-upstream bouncer user-name net-name)))
+               (if upstream
+                   (progn
+                     (bouncer--status-reply client
+                      (format nil "Reconnecting to ~a..." net-name))
+                     (setf (upstream-reconnect-p upstream) t)
+                     (when (upstream-connected-p upstream)
+                       (upstream-disconnect upstream))
+                     (bt:make-thread
+                      (lambda () (upstream-connect upstream))
+                      :name "cloak-jump"))
+                   (bouncer--status-reply client
+                    (format nil "Unknown network: ~a" net-name))))
+             (bouncer--status-reply client "Usage: jump <network>"))))
+
+      ((string= cmd "uptime")
+       (bouncer--status-reply client
+        (format nil "Bouncer running since ~a"
+                (local-time:format-timestring nil
+                 (local-time:universal-to-timestamp
+                  (bouncer-start-time bouncer))))))
+
+      (t
+       (bouncer--status-reply client
+        (format nil "Unknown command: ~a (try 'help')" cmd))))))
 
 ;;; --- New Client Handling ---
 
