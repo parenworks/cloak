@@ -1,0 +1,197 @@
+;;;; config.lisp - Configuration system for CLoak
+;;;; Config is a Lisp s-expression file, human-editable and web-editable.
+
+(in-package #:cloak.config)
+
+;;; --- Structures ---
+
+(defclass bouncer-config ()
+  ((listen-host :initarg :listen-host :accessor config-listen-host
+                :initform "0.0.0.0")
+   (listen-port :initarg :listen-port :accessor config-listen-port
+                :initform 6697)
+   (listen-tls :initarg :listen-tls :accessor config-listen-tls
+               :initform t)
+   (tls-cert :initarg :tls-cert :accessor config-tls-cert
+             :initform nil)
+   (tls-key :initarg :tls-key :accessor config-tls-key
+            :initform nil)
+   (web-host :initarg :web-host :accessor config-web-host
+             :initform "127.0.0.1")
+   (web-port :initarg :web-port :accessor config-web-port
+             :initform 8076)
+   (users :initarg :users :accessor config-users
+          :initform nil)
+   (log-level :initarg :log-level :accessor config-log-level
+              :initform :info)))
+
+(defclass user-config ()
+  ((name :initarg :name :accessor user-name)
+   (password-hash :initarg :password-hash :accessor user-password-hash)
+   (networks :initarg :networks :accessor user-networks
+             :initform nil)
+   (admin-p :initarg :admin-p :accessor user-admin-p
+            :initform nil)))
+
+(defclass network-config ()
+  ((name :initarg :name :accessor network-name)
+   (server :initarg :server :accessor network-server)
+   (port :initarg :port :accessor network-port
+         :initform 6697)
+   (tls :initarg :tls :accessor network-tls
+        :initform t)
+   (nick :initarg :nick :accessor network-nick)
+   (username :initarg :username :accessor network-username
+             :initform nil)
+   (realname :initarg :realname :accessor network-realname
+             :initform "CLoak User")
+   (password :initarg :password :accessor network-password
+             :initform nil)
+   (sasl :initarg :sasl :accessor network-sasl
+         :initform nil)
+   (autojoin :initarg :autojoin :accessor network-autojoin
+             :initform nil)
+   (buffer-size :initarg :buffer-size :accessor network-buffer-size
+                :initform 500)))
+
+;;; --- Globals ---
+
+(defvar *config* nil
+  "Current bouncer configuration.")
+
+(defvar *config-path* (merge-pathnames ".cloak/config.lisp"
+                                        (user-homedir-pathname))
+  "Path to the configuration file.")
+
+;;; --- Serialization ---
+
+(defgeneric config-to-plist (obj)
+  (:documentation "Serialize a config object to a plist for writing."))
+
+(defmethod config-to-plist ((net network-config))
+  (list :name (network-name net)
+        :server (network-server net)
+        :port (network-port net)
+        :tls (network-tls net)
+        :nick (network-nick net)
+        :username (network-username net)
+        :realname (network-realname net)
+        :password (network-password net)
+        :sasl (network-sasl net)
+        :autojoin (network-autojoin net)
+        :buffer-size (network-buffer-size net)))
+
+(defmethod config-to-plist ((user user-config))
+  (list :name (user-name user)
+        :password-hash (user-password-hash user)
+        :admin-p (user-admin-p user)
+        :networks (mapcar #'config-to-plist (user-networks user))))
+
+(defmethod config-to-plist ((cfg bouncer-config))
+  (list :listen-host (config-listen-host cfg)
+        :listen-port (config-listen-port cfg)
+        :listen-tls (config-listen-tls cfg)
+        :tls-cert (config-tls-cert cfg)
+        :tls-key (config-tls-key cfg)
+        :web-host (config-web-host cfg)
+        :web-port (config-web-port cfg)
+        :log-level (config-log-level cfg)
+        :users (mapcar #'config-to-plist (config-users cfg))))
+
+;;; --- Deserialization ---
+
+(defun plist-to-network (plist)
+  "Create a network-config from PLIST."
+  (make-instance 'network-config
+    :name (getf plist :name)
+    :server (getf plist :server)
+    :port (or (getf plist :port) 6697)
+    :tls (getf plist :tls t)
+    :nick (getf plist :nick)
+    :username (getf plist :username)
+    :realname (or (getf plist :realname) "CLoak User")
+    :password (getf plist :password)
+    :sasl (getf plist :sasl)
+    :autojoin (getf plist :autojoin)
+    :buffer-size (or (getf plist :buffer-size) 500)))
+
+(defun plist-to-user (plist)
+  "Create a user-config from PLIST."
+  (make-instance 'user-config
+    :name (getf plist :name)
+    :password-hash (getf plist :password-hash)
+    :admin-p (getf plist :admin-p)
+    :networks (mapcar #'plist-to-network (getf plist :networks))))
+
+(defun plist-to-config (plist)
+  "Create a bouncer-config from PLIST."
+  (make-instance 'bouncer-config
+    :listen-host (or (getf plist :listen-host) "0.0.0.0")
+    :listen-port (or (getf plist :listen-port) 6697)
+    :listen-tls (getf plist :listen-tls t)
+    :tls-cert (getf plist :tls-cert)
+    :tls-key (getf plist :tls-key)
+    :web-host (or (getf plist :web-host) "127.0.0.1")
+    :web-port (or (getf plist :web-port) 8076)
+    :log-level (or (getf plist :log-level) :info)
+    :users (mapcar #'plist-to-user (getf plist :users))))
+
+;;; --- File I/O ---
+
+(defun load-config (&optional (path *config-path*))
+  "Load configuration from PATH. Returns bouncer-config."
+  (unless (probe-file path)
+    (generate-default-config path))
+  (let ((plist (with-open-file (in path :direction :input)
+                 (read in))))
+    (setf *config* (plist-to-config plist))
+    *config*))
+
+(defun save-config (&optional (config *config*) (path *config-path*))
+  "Save CONFIG to PATH as a readable s-expression."
+  (ensure-directories-exist path)
+  (with-open-file (out path :direction :output
+                            :if-exists :supersede
+                            :if-does-not-exist :create)
+    (let ((*print-pretty* t)
+          (*print-case* :downcase)
+          (*print-right-margin* 80))
+      (format out ";;;; CLoak configuration file~%")
+      (format out ";;;; Generated by CLoak v~a~%" (asdf:component-version
+                                                     (asdf:find-system "cloak")))
+      (format out ";;;; Edit manually or via web interface at http://~a:~d~2%"
+              (config-web-host config) (config-web-port config))
+      (prin1 (config-to-plist config) out)
+      (terpri out)))
+  path)
+
+(defun generate-default-config (&optional (path *config-path*))
+  "Generate a default configuration file at PATH."
+  (let ((config (make-instance 'bouncer-config
+                  :users (list (make-instance 'user-config
+                                 :name "admin"
+                                 :password-hash ""
+                                 :admin-p t
+                                 :networks (list (make-instance 'network-config
+                                                   :name "libera"
+                                                   :server "irc.libera.chat"
+                                                   :port 6697
+                                                   :tls t
+                                                   :nick "cloak-user")))))))
+    (save-config config path)
+    (format t "~&[CLoak] Generated default config at ~a~%" path)
+    (format t "[CLoak] Edit the config file to set your password and nick.~%")
+    config))
+
+;;; --- Lookups ---
+
+(defun find-user (name &optional (config *config*))
+  "Find user by NAME in CONFIG."
+  (find name (config-users config)
+        :key #'user-name :test #'string-equal))
+
+(defun find-network (user-name network-name &optional (config *config*))
+  "Find NETWORK-NAME under USER-NAME in CONFIG."
+  (alex:when-let ((user (find-user user-name config)))
+    (find network-name (user-networks user)
+          :key #'network-name :test #'string-equal)))

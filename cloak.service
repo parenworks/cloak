@@ -1,0 +1,25 @@
+[Unit]
+Description=CLoak IRC Bouncer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloak
+Group=cloak
+WorkingDirectory=/opt/cloak
+ExecStart=/usr/local/bin/sbcl --non-interactive --load /opt/cloak/run.lisp
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/cloak/.cloak
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
