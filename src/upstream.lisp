@@ -331,22 +331,39 @@ If JITTER is T, adds random jitter between base and 1.5x base."
        ;; Autojoin channels
        (dolist (chan (cloak.config:network-autojoin (upstream-config upstream)))
          (upstream-send upstream (irc-join chan))))
-      ;; Nick change
-      ((string= command "433") ; Nick in use
-       (let ((new-nick (format nil "~a_" (upstream-nick upstream))))
+      ;; Nick in use
+      ((string= command "433")
+       (let* ((config (upstream-config upstream))
+              (desired (cloak.config:network-nick config))
+              (alt (cloak.config:network-alt-nick config))
+              (current (upstream-nick upstream))
+              (new-nick (cond
+                          ((string= current desired)
+                           (or alt (format nil "~a_" desired)))
+                          (t (format nil "~a_" current)))))
          (setf (upstream-nick upstream) new-nick)
          (upstream-send upstream (irc-nick new-nick))))
+      ;; Keepnick: reclaim desired nick when someone with it quits
+      ((string= command "QUIT")
+       (let* ((config (upstream-config upstream))
+              (desired (cloak.config:network-nick config))
+              (quitter (source-nick (irc-message-source msg))))
+         (when (and (not (string-equal (upstream-nick upstream) desired))
+                    (string-equal quitter desired))
+           (upstream-send upstream (irc-nick desired)))))
       ;; Track our nick
       ((and (string= command "NICK")
             (string-equal (source-nick (irc-message-source msg))
                           (upstream-nick upstream)))
        (setf (upstream-nick upstream) (first (irc-message-params msg))))
-      ;; Track channels
+      ;; Track channels (store key if present)
       ((string= command "JOIN")
        (when (string-equal (source-nick (irc-message-source msg))
                            (upstream-nick upstream))
-         (let ((chan (first (irc-message-params msg))))
-           (setf (gethash chan (upstream-channels upstream)) t))))
+         (let ((chan (first (irc-message-params msg)))
+               (key (second (irc-message-params msg))))
+           (setf (gethash chan (upstream-channels upstream))
+                 (or key t)))))
       ((string= command "PART")
        (when (string-equal (source-nick (irc-message-source msg))
                            (upstream-nick upstream))

@@ -34,8 +34,10 @@
    #:network-realname
    #:network-password
    #:network-sasl
+   #:network-alt-nick
    #:network-autojoin
    #:network-buffer-size
+   #:network-block-motd
    ;; Operations
    #:load-config
    #:save-config

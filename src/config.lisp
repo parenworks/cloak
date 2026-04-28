@@ -49,10 +49,16 @@
              :initform nil)
    (sasl :initarg :sasl :accessor network-sasl
          :initform nil)
+   (alt-nick :initarg :alt-nick :accessor network-alt-nick
+             :initform nil
+             :documentation "Alternate nick if primary is taken.")
    (autojoin :initarg :autojoin :accessor network-autojoin
              :initform nil)
    (buffer-size :initarg :buffer-size :accessor network-buffer-size
-                :initform 500)))
+                :initform 500)
+   (block-motd :initarg :block-motd :accessor network-block-motd
+               :initform nil
+               :documentation "If T, suppress MOTD on client connect.")))
 
 ;;; --- Globals ---
 
@@ -78,8 +84,10 @@
         :realname (network-realname net)
         :password (network-password net)
         :sasl (network-sasl net)
+        :alt-nick (network-alt-nick net)
         :autojoin (network-autojoin net)
-        :buffer-size (network-buffer-size net)))
+        :buffer-size (network-buffer-size net)
+        :block-motd (network-block-motd net)))
 
 (defmethod config-to-plist ((user user-config))
   (list :name (user-name user)
@@ -112,8 +120,10 @@
     :realname (or (getf plist :realname) "CLoak User")
     :password (getf plist :password)
     :sasl (getf plist :sasl)
+    :alt-nick (getf plist :alt-nick)
     :autojoin (getf plist :autojoin)
-    :buffer-size (or (getf plist :buffer-size) 500)))
+    :buffer-size (or (getf plist :buffer-size) 500)
+    :block-motd (getf plist :block-motd)))
 
 (defun plist-to-user (plist)
   "Create a user-config from PLIST."

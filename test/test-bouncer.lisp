@@ -66,6 +66,28 @@
     (is (string= "*status" (first (cloak.protocol:irc-message-params msg))))
     (is (string= "help" (second (cloak.protocol:irc-message-params msg))))))
 
+;;; --- Alt nick tests ---
+
+(test alt-nick-config
+  "Alt nick is preserved through config serialization."
+  (let* ((net (make-instance 'cloak.config:network-config
+                :name "test" :server "irc.test.net" :port 6697
+                :tls t :nick "primary" :alt-nick "backup"
+                :autojoin '("#test")))
+         (plist (cloak.config::config-to-plist net)))
+    (is (string= "backup" (getf plist :alt-nick)))))
+
+;;; --- Block MOTD config test ---
+
+(test block-motd-config
+  "Block MOTD option roundtrips through config."
+  (let* ((net (make-instance 'cloak.config:network-config
+                :name "test" :server "irc.test.net" :port 6697
+                :tls t :nick "user" :block-motd t))
+         (plist (cloak.config::config-to-plist net))
+         (restored (cloak.config::plist-to-network plist)))
+    (is (eq t (cloak.config:network-block-motd restored)))))
+
 ;;; --- Config roundtrip ---
 
 (test config-roundtrip

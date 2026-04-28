@@ -59,8 +59,13 @@
   "Get or create the message buffer for a target."
   (let ((key (bouncer--buffer-key user-name network-name target)))
     (or (gethash key (bouncer-buffers bouncer))
-        (setf (gethash key (bouncer-buffers bouncer))
-              (make-message-buffer :capacity 500)))))
+        (let ((net-cfg (find-network user-name network-name
+                                     (bouncer-config bouncer))))
+          (setf (gethash key (bouncer-buffers bouncer))
+                (make-message-buffer
+                 :capacity (if net-cfg
+                               (network-buffer-size net-cfg)
+                               500)))))))
 
 ;;; --- Message Relay ---
 
@@ -95,17 +100,23 @@ Buffer it and relay to any attached clients."
                                (cloak.protocol:irc-message-tags msg)
                                :test #'string=))))
         (buffer-push buffer raw-line msgid)))
-    ;; Relay to attached clients
-    (bt:with-lock-held ((bouncer-lock bouncer))
-      (dolist (client (bouncer-clients bouncer))
-        (when (and (client-authenticated-p client)
-                   (string-equal (client-network client) network-name))
-          ;; Don't relay our own messages back (they're already echoed)
-          (unless (and (string= command "PRIVMSG")
-                       (string-equal (cloak.protocol:source-nick
-                                      (cloak.protocol:irc-message-source msg))
-                                     (upstream-nick upstream)))
-            (client-send client raw-line)))))))
+    ;; Check MOTD blocking
+    (let ((block-motd (and (member command '("375" "372" "376") :test #'string=)
+                           (let ((net-cfg (find-network user-name network-name
+                                                        (bouncer-config bouncer))))
+                             (and net-cfg (network-block-motd net-cfg))))))
+      ;; Relay to attached clients
+      (unless block-motd
+        (bt:with-lock-held ((bouncer-lock bouncer))
+          (dolist (client (bouncer-clients bouncer))
+            (when (and (client-authenticated-p client)
+                       (string-equal (client-network client) network-name))
+              ;; Don't relay our own messages back (they're already echoed)
+              (unless (and (string= command "PRIVMSG")
+                           (string-equal (cloak.protocol:source-nick
+                                          (cloak.protocol:irc-message-source msg))
+                                         (upstream-nick upstream)))
+                (client-send client raw-line)))))))))
 
 (defun bouncer--message-target (msg our-nick)
   "Determine the buffer target for MSG. DMs use the other party's nick."
@@ -292,7 +303,9 @@ Finds the upstream using any user who owns that network."
        (bouncer--status-reply client "  connect <net>  - Connect to a network")
        (bouncer--status-reply client "  disconnect <net> - Disconnect from a network")
        (bouncer--status-reply client "  jump <net>     - Reconnect to a network")
-       (bouncer--status-reply client "  uptime         - Show bouncer uptime"))
+       (bouncer--status-reply client "  uptime         - Show bouncer uptime")
+       (bouncer--status-reply client "  saveconfig     - Save current configuration")
+       (bouncer--status-reply client "  reloadconfig   - Reload configuration from disk"))
 
       ((string= cmd "version")
        (bouncer--status-reply client
@@ -388,6 +401,22 @@ Finds the upstream using any user who owns that network."
                 (local-time:format-timestring nil
                  (local-time:universal-to-timestamp
                   (bouncer-start-time bouncer))))))
+
+      ((string= cmd "saveconfig")
+       (handler-case
+           (progn
+             (save-config (bouncer-config bouncer))
+             (bouncer--status-reply client "Configuration saved."))
+         (error (e)
+           (bouncer--status-reply client (format nil "Save failed: ~a" e)))))
+
+      ((string= cmd "reloadconfig")
+       (handler-case
+           (let ((new-config (load-config)))
+             (setf (bouncer-config bouncer) new-config)
+             (bouncer--status-reply client "Configuration reloaded."))
+         (error (e)
+           (bouncer--status-reply client (format nil "Reload failed: ~a" e)))))
 
       (t
        (bouncer--status-reply client
