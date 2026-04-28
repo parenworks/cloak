@@ -160,14 +160,7 @@ Buffer it and relay to any attached clients."
                      (or (first (cloak.protocol:irc-message-params msg)) "CLoak"))))
       ;; Everything else - forward to upstream
       (upstream
-       (upstream-send upstream line)
-       ;; Buffer our own PRIVMSG for other clients
-       (when (string= command "PRIVMSG")
-         (let* ((target (first (cloak.protocol:irc-message-params msg)))
-                (buffer (bouncer--get-buffer bouncer user-name network target))
-                (echoed (format nil ":~a!~a@CLoak ~a"
-                                (upstream-nick upstream) user-name line)))
-           (buffer-push buffer echoed)))))))
+       (upstream-send upstream line)))))
 
 ;;; --- Playback ---
 
