@@ -18,6 +18,8 @@
    ;; IRC state tracking
    (channels :initform (make-hash-table :test 'equal) :accessor upstream-channels)
    (cap-enabled :initform nil :accessor upstream-cap-enabled)
+   (cap-state :initform nil :accessor upstream-cap-state
+              :documentation ":ls-received, :req-sent, :sasl-auth, :done")
    (server-name :initform nil :accessor upstream-server-name)
    ;; Health
    (last-activity :initform (get-universal-time) :accessor upstream-last-activity)
@@ -163,11 +165,123 @@
     (when (string= (irc-message-command msg) "PING")
       (upstream-send upstream (irc-pong (or (first (irc-message-params msg)) "")))
       (return-from upstream--handle-line))
+    ;; Handle CAP negotiation
+    (when (upstream--handle-cap upstream msg)
+      (return-from upstream--handle-line))
     ;; Track state changes
     (upstream--track-state upstream msg)
     ;; Forward to bouncer via callback
     (when (upstream-message-handler upstream)
       (funcall (upstream-message-handler upstream) upstream line msg))))
+
+;;; --- CAP Negotiation & SASL ---
+
+(defun upstream--handle-cap (upstream msg)
+  "Handle CAP negotiation messages. Return T if consumed."
+  (let ((command (irc-message-command msg)))
+    (cond
+      ;; CAP LS response
+      ((and (string= command "CAP")
+            (member "LS" (irc-message-params msg) :test #'string=))
+       (let* ((cap-str (car (last (irc-message-params msg))))
+              (caps (split-sequence:split-sequence #\Space cap-str
+                                                   :remove-empty-subseqs t))
+              (want nil))
+         (format t "[CLoak] Server caps: ~{~a~^ ~}~%" caps)
+         ;; Request caps we want
+         (when (member "sasl" caps :test #'string-equal)
+           (push "sasl" want))
+         (when (member "server-time" caps :test #'string-equal)
+           (push "server-time" want))
+         (when (member "message-tags" caps :test #'string-equal)
+           (push "message-tags" want))
+         (when (member "batch" caps :test #'string-equal)
+           (push "batch" want))
+         (when (member "labeled-response" caps :test #'string-equal)
+           (push "labeled-response" want))
+         (when (member "echo-message" caps :test #'string-equal)
+           (push "echo-message" want))
+         (if want
+             (progn
+               (upstream-send upstream
+                             (format nil "CAP REQ :~{~a~^ ~}" want))
+               (setf (upstream-cap-state upstream) :req-sent))
+             ;; Nothing to request, end CAP
+             (progn
+               (upstream-send upstream "CAP END")
+               (setf (upstream-cap-state upstream) :done))))
+       t)
+      ;; CAP ACK
+      ((and (string= command "CAP")
+            (member "ACK" (irc-message-params msg) :test #'string=))
+       (let ((acked (car (last (irc-message-params msg)))))
+         (format t "[CLoak] CAP ACK: ~a~%" acked)
+         (setf (upstream-cap-enabled upstream)
+               (split-sequence:split-sequence #\Space acked
+                                              :remove-empty-subseqs t))
+         ;; If SASL was acked, start authentication
+         (if (member "sasl" (upstream-cap-enabled upstream) :test #'string-equal)
+             (upstream--start-sasl upstream)
+             (progn
+               (upstream-send upstream "CAP END")
+               (setf (upstream-cap-state upstream) :done))))
+       t)
+      ;; CAP NAK
+      ((and (string= command "CAP")
+            (member "NAK" (irc-message-params msg) :test #'string=))
+       (format t "[CLoak] CAP NAK: ~a~%" (car (last (irc-message-params msg))))
+       (upstream-send upstream "CAP END")
+       (setf (upstream-cap-state upstream) :done)
+       t)
+      ;; AUTHENTICATE response
+      ((string= command "AUTHENTICATE")
+       (upstream--handle-authenticate upstream msg)
+       t)
+      ;; SASL success (903)
+      ((string= command "903")
+       (format t "[CLoak] SASL authentication successful~%")
+       (upstream-send upstream "CAP END")
+       (setf (upstream-cap-state upstream) :done)
+       t)
+      ;; SASL failure (902, 904, 905)
+      ((member command '("902" "904" "905") :test #'string=)
+       (format t "[CLoak] SASL authentication failed: ~a~%"
+               (car (last (irc-message-params msg))))
+       (upstream-send upstream "CAP END")
+       (setf (upstream-cap-state upstream) :done)
+       t)
+      ;; SASL logged in (900)
+      ((string= command "900")
+       (format t "[CLoak] Logged in as ~a~%"
+               (third (irc-message-params msg)))
+       t)
+      (t nil))))
+
+(defun upstream--start-sasl (upstream)
+  "Begin SASL PLAIN authentication."
+  (let ((sasl-type (cloak.config:network-sasl (upstream-config upstream))))
+    (if (eq sasl-type :plain)
+        (progn
+          (format t "[CLoak] Starting SASL PLAIN~%")
+          (upstream-send upstream "AUTHENTICATE PLAIN")
+          (setf (upstream-cap-state upstream) :sasl-auth))
+        ;; No SASL configured, just end CAP
+        (progn
+          (format t "[CLoak] SASL not configured, ending CAP~%")
+          (upstream-send upstream "CAP END")
+          (setf (upstream-cap-state upstream) :done)))))
+
+(defun upstream--handle-authenticate (upstream msg)
+  "Handle AUTHENTICATE + from server, send credentials."
+  (let ((param (first (irc-message-params msg))))
+    (when (string= param "+")
+      (let* ((config (upstream-config upstream))
+             (nick (upstream-nick upstream))
+             (password (or (cloak.config:network-password config) ""))
+             ;; SASL PLAIN: \0nick\0password
+             (payload (format nil "~a~c~a~c~a" nick #\Nul nick #\Nul password))
+             (encoded (cl-base64:string-to-base64-string payload)))
+        (upstream-send upstream (format nil "AUTHENTICATE ~a" encoded))))))
 
 (defun upstream--track-state (upstream msg)
   "Update internal state from MSG (nick changes, channel tracking, etc.)."
