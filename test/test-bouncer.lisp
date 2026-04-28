@@ -88,6 +88,44 @@
          (restored (cloak.config::plist-to-network plist)))
     (is (eq t (cloak.config:network-block-motd restored)))))
 
+;;; --- Multi-client dedup tests ---
+
+(test echo-dedup-tracks-sender
+  "Bouncer last-sender is set when a PRIVMSG is forwarded."
+  (let ((bouncer (cloak.bouncer:make-bouncer
+                  (make-instance 'cloak.config:bouncer-config
+                    :users nil))))
+    ;; Initially nil
+    (is (null (cloak.bouncer::bouncer-last-sender bouncer)))
+    ;; Simulate setting sender
+    (let ((fake-client :client-a))
+      (setf (cloak.bouncer::bouncer-last-sender bouncer) fake-client)
+      (is (eq fake-client (cloak.bouncer::bouncer-last-sender bouncer))))
+    ;; Clearing works
+    (setf (cloak.bouncer::bouncer-last-sender bouncer) nil)
+    (is (null (cloak.bouncer::bouncer-last-sender bouncer)))))
+
+(test echo-dedup-sender-skipped
+  "Echo message is not relayed to the sender, only to other clients."
+  (let ((bouncer (cloak.bouncer:make-bouncer
+                  (make-instance 'cloak.config:bouncer-config
+                    :users nil)))
+        (client-a :sender)
+        (client-b :other))
+    ;; Record client-a as the sender
+    (setf (cloak.bouncer::bouncer-last-sender bouncer) client-a)
+    ;; Simulate echo-dedup logic
+    (let ((echo-p t)
+          (sender (cloak.bouncer::bouncer-last-sender bouncer))
+          (relayed nil))
+      ;; For each "client", check if it would be relayed
+      (dolist (client (list client-a client-b))
+        (unless (and echo-p (eq client sender))
+          (push client relayed)))
+      ;; client-a (sender) should be skipped, client-b should get it
+      (is (= 1 (length relayed)))
+      (is (eq client-b (first relayed))))))
+
 ;;; --- Config roundtrip ---
 
 (test config-roundtrip

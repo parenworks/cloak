@@ -15,7 +15,9 @@
             :documentation "Hash: \"user/network/target\" -> message-buffer")
    (lock :initform (bt:make-lock "bouncer-lock") :accessor bouncer-lock)
    (running-p :initform nil :accessor bouncer-running-p)
-   (start-time :initform (get-universal-time) :accessor bouncer-start-time))
+   (start-time :initform (get-universal-time) :accessor bouncer-start-time)
+   (last-sender :initform nil :accessor bouncer-last-sender
+                :documentation "The client that sent the last PRIVMSG/NOTICE, for echo dedup."))
   (:documentation "The core CLoak bouncer instance."))
 
 (defvar *bouncer* nil "The active bouncer instance.")
@@ -107,16 +109,21 @@ Buffer it and relay to any attached clients."
                              (and net-cfg (network-block-motd net-cfg))))))
       ;; Relay to attached clients
       (unless block-motd
-        (bt:with-lock-held ((bouncer-lock bouncer))
-          (dolist (client (bouncer-clients bouncer))
-            (when (and (client-authenticated-p client)
-                       (string-equal (client-network client) network-name))
-              ;; Don't relay our own messages back (they're already echoed)
-              (unless (and (string= command "PRIVMSG")
+        (let ((echo-p (and (member command '("PRIVMSG" "NOTICE") :test #'string=)
                            (string-equal (cloak.protocol:source-nick
                                           (cloak.protocol:irc-message-source msg))
-                                         (upstream-nick upstream)))
-                (client-send client raw-line)))))))))
+                                         (upstream-nick upstream))))
+              (sender (bouncer-last-sender bouncer)))
+          ;; Clear last-sender after consuming it
+          (when echo-p
+            (setf (bouncer-last-sender bouncer) nil))
+          (bt:with-lock-held ((bouncer-lock bouncer))
+            (dolist (client (bouncer-clients bouncer))
+              (when (and (client-authenticated-p client)
+                         (string-equal (client-network client) network-name))
+                ;; Echo from our own message: skip the sender, relay to others
+                (unless (and echo-p (eq client sender))
+                  (client-send client raw-line))))))))))
 
 (defun bouncer--message-target (msg our-nick)
   "Determine the buffer target for MSG. DMs use the other party's nick."
@@ -200,6 +207,9 @@ Buffer it and relay to any attached clients."
        (bouncer--handle-status bouncer user-name client msg))
       ;; Everything else - forward to upstream
       (upstream
+       ;; Track sender for echo-message dedup
+       (when (member command '("PRIVMSG" "NOTICE") :test #'string=)
+         (setf (bouncer-last-sender bouncer) client))
        (upstream-send upstream line)))))
 
 ;;; --- Away Management ---
