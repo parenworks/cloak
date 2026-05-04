@@ -17,6 +17,7 @@
    #:config-web-port
    #:config-users
    #:config-log-level
+   #:config-enabled-modules
    ;; User config
    #:user-config
    #:user-name
@@ -38,15 +39,19 @@
    #:network-autojoin
    #:network-buffer-size
    #:network-block-motd
+   ;; Paths
+   #:xdg-config-home
    ;; Operations
    #:load-config
    #:save-config
+   #:config-to-plist
    #:generate-default-config
    #:find-user
    #:find-network
    ;; Password hashing
    #:hash-password
-   #:verify-password))
+   #:verify-password
+   #:default-password-p))
 
 (defpackage #:cloak.protocol
   (:use #:cl)
@@ -116,11 +121,16 @@
    #:upstream-disconnect
    #:upstream-send
    #:upstream-connected-p
+   #:upstream-state
    #:upstream-nick
    #:upstream-network-name
    #:upstream-channels
+   #:upstream-channel-nicks
    #:upstream-cap-enabled
+   #:upstream-config
    #:upstream-reconnect-p
+   #:upstream-reconnect-attempts
+   #:upstream-on-state-change
    #:calculate-backoff))
 
 (defpackage #:cloak.downstream
@@ -134,6 +144,7 @@
    #:client-disconnect
    #:client-nick
    #:client-user
+   #:client-ident
    #:client-authenticated-p
    #:client-network
    #:client-last-playback
@@ -156,8 +167,13 @@
    #:start-bouncer
    #:stop-bouncer
    ;; Runtime operations
+   #:bouncer-config
    #:bouncer-upstreams
    #:bouncer-clients
+   #:bouncer-buffers
+   #:bouncer-lock
+   #:bouncer-running-p
+   #:bouncer-start-time
    #:attach-client
    #:detach-client
    #:relay-to-upstream
@@ -165,17 +181,71 @@
    #:playback-buffer))
 
 (defpackage #:cloak.modules
-  (:use #:cl #:cloak.bouncer)
+  (:use #:cl)
+  (:local-nicknames (#:bt #:bordeaux-threads))
   (:export
+   ;; Module protocol
    #:module
    #:module-name
    #:module-description
+   #:module-version
+   #:module-author
+   #:module-scope
+   #:module-network
+   #:module-timers
+   ;; Lifecycle hooks
    #:on-load
    #:on-unload
+   ;; Message hooks
    #:on-upstream-message
    #:on-downstream-message
+   ;; Connection hooks
+   #:on-client-attach
+   #:on-client-detach
+   #:on-upstream-connect
+   #:on-upstream-disconnect
+   ;; Auth hooks
+   #:on-new-connection
+   #:on-auth-failure
+   ;; Channel hooks
+   #:on-channel-join
+   #:on-channel-part
+   #:on-channel-kick
+   ;; Settings
+   #:module-settings-html
+   #:on-save-settings
+   ;; Timer support
+   #:start-module-timer
+   ;; Persistent storage
+   #:load-module-data
+   #:save-module-data
+   ;; Registry
    #:register-module
-   #:find-module))
+   #:define-module
+   #:find-module-registration
+   #:list-registered-modules
+   ;; Active modules
+   #:*active-modules*
+   #:module-active-p
+   #:active-module
+   #:list-active-modules
+   #:load-module
+   #:unload-module
+   ;; Hook dispatch
+   #:run-upstream-hooks
+   #:run-downstream-hooks
+   #:run-client-attach-hooks
+   #:run-client-detach-hooks
+   #:run-upstream-connect-hooks
+   #:run-upstream-disconnect-hooks
+   #:run-channel-join-hooks
+   #:run-channel-part-hooks
+   #:run-channel-kick-hooks
+   #:run-new-connection-hooks
+   #:run-auth-failure-hooks
+   ;; Plugin system
+   #:plugin-directory
+   #:scan-plugins))
 
 (defpackage #:cloak
   (:use #:cl)
@@ -184,4 +254,5 @@
    #:start
    #:stop
    #:main
-   #:version))
+   #:version
+   #:*version*))

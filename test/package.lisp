@@ -2,6 +2,7 @@
 
 (defpackage #:cloak.test
   (:use #:cl #:fiveam #:cloak.protocol #:cloak.buffer)
+  (:local-nicknames (#:bt #:bordeaux-threads))
   (:export #:run-tests))
 
 (in-package #:cloak.test)

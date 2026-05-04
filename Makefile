@@ -2,7 +2,7 @@ SBCL ?= sbcl
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SERVICEDIR = /etc/systemd/system
-CONFDIR = /home/cloak/.cloak
+CONFDIR = /home/cloak/.config/cloak
 
 VERSION = $(shell grep ':version' cloak.asd | head -1 | sed 's/.*"\(.*\)".*/\1/')
 BINARY = bin/cloak

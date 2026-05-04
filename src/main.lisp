@@ -30,26 +30,42 @@ client listener, and optionally the web admin interface."
       (cloak.bouncer:start-bouncer bouncer)
       ;; Start web admin if requested
       (when web
-        (format t "[CLoak] Web admin: http://~a:~d~%"
-                (cloak.config:config-web-host config)
-                (cloak.config:config-web-port config))
-        ;; TODO: Start Fluxion web app
-        )
+        (funcall (uiop:find-symbol* '#:start-web-admin '#:cloak.web)
+                 (cloak.config:config-web-host config)
+                 (cloak.config:config-web-port config)))
       bouncer)))
 
 (defun stop ()
   "Stop the running CLoak bouncer."
+  (format t "[CLoak] Stopping web admin~%")
+  (ignore-errors
+    (funcall (uiop:find-symbol* '#:stop-web-admin '#:cloak.web)))
   (when cloak.bouncer:*bouncer*
     (cloak.bouncer:stop-bouncer cloak.bouncer:*bouncer*)))
+
+(defvar *shutdown-requested* nil
+  "Flag set by signal handlers to request clean shutdown.")
 
 (defun main ()
   "Command-line entry point for CLoak.
 Starts the bouncer and blocks until interrupted."
+  (setf *shutdown-requested* nil)
+  ;; Handle SIGTERM for clean shutdown (systemd, kill, etc.)
+  #+sbcl
+  (sb-sys:enable-interrupt sb-unix:sigterm
+    (lambda (sig info context)
+      (declare (ignore sig info context))
+      (setf *shutdown-requested* t)))
   (let ((bouncer (start)))
     (when bouncer
       (format t "[CLoak] Press Ctrl+C to stop~%")
       (handler-case
-          (loop (sleep 1))
+          (loop
+            (sleep 1)
+            (when *shutdown-requested*
+              (format t "~%[CLoak] SIGTERM received, shutting down...~%")
+              (stop)
+              (return)))
         (#+sbcl sb-sys:interactive-interrupt
          #+ccl ccl:interrupt-signal-condition
          #-(or sbcl ccl) condition

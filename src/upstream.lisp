@@ -17,6 +17,8 @@
              :initform "CLoak User")
    ;; IRC state tracking
    (channels :initform (make-hash-table :test 'equal) :accessor upstream-channels)
+   (channel-nicks :initform (make-hash-table :test 'equal) :accessor upstream-channel-nicks
+                  :documentation "Hash table mapping channel names to hash tables of nicks.")
    (cap-enabled :initform nil :accessor upstream-cap-enabled)
    (cap-state :initform nil :accessor upstream-cap-state
               :documentation ":ls-received, :req-sent, :sasl-auth, :done")
@@ -34,8 +36,14 @@
    ;; Callbacks
    (message-handler :initarg :message-handler :accessor upstream-message-handler
                     :initform nil)
+   (on-state-change :initarg :on-state-change :accessor upstream-on-state-change
+                    :initform nil
+                    :documentation "Callback (lambda (upstream new-state) ...) invoked after state transitions.")
    ;; Config
-   (config :initarg :config :accessor upstream-config))
+   (config :initarg :config :accessor upstream-config)
+   ;; Send throttling
+   (last-send-time :initform 0 :accessor upstream-last-send-time
+                   :documentation "Internal real time of last send, for flood protection."))
   (:documentation "A persistent connection from CLoak to an IRC server."))
 
 (defun make-upstream (network-config &key message-handler)
@@ -53,6 +61,10 @@
 
 (defun upstream-connect (upstream)
   "Connect UPSTREAM to its IRC server. Returns T on success."
+  ;; Wait for old read-thread to finish before reconnecting
+  (let ((old-thread (upstream-read-thread upstream)))
+    (when (and old-thread (bt:thread-alive-p old-thread))
+      (ignore-errors (bt:join-thread old-thread))))
   (let* ((config (upstream-config upstream))
          (server (cloak.config:network-server config))
          (port (cloak.config:network-port config))
@@ -65,7 +77,7 @@
                                           :address-family :internet
                                           :type :stream
                                           :external-format '(:utf-8 :eol-style :crlf)
-                                          :ipv6 nil)))
+                                          :ipv6 t)))
             (iolib:connect sock (iolib:lookup-hostname server) :port port :wait t)
             (setf (upstream-socket upstream) sock)
             (let ((stream (if use-tls
@@ -93,16 +105,21 @@
         (upstream-disconnect upstream)
         nil))))
 
-(defun upstream-disconnect (upstream)
-  "Disconnect UPSTREAM from the IRC server."
+(defun upstream-disconnect (upstream &key quit)
+  "Disconnect UPSTREAM from the IRC server.
+When QUIT is true, send QUIT first for a clean shutdown."
+  (when (and quit (upstream-stream upstream)
+               (not (eq (upstream-state upstream) :disconnected)))
+    (ignore-errors
+      (upstream-send upstream (irc-quit "CLoak disconnect"))
+      (force-output (upstream-stream upstream))))
   (bt:with-lock-held ((upstream-lock upstream))
     (setf (upstream-state upstream) :disconnected)
-    (when (upstream-stream upstream)
-      (ignore-errors (close (upstream-stream upstream)))
-      (setf (upstream-stream upstream) nil))
     (when (upstream-socket upstream)
       (ignore-errors (close (upstream-socket upstream)))
-      (setf (upstream-socket upstream) nil))))
+      (setf (upstream-socket upstream) nil))
+    (when (upstream-stream upstream)
+      (setf (upstream-stream upstream) nil))))
 
 (defun upstream-connected-p (upstream)
   "Return T if UPSTREAM is connected."
@@ -111,9 +128,21 @@
 ;;; --- Send ---
 
 (defun upstream-send (upstream raw-line)
-  "Send RAW-LINE to the IRC server via UPSTREAM."
+  "Send RAW-LINE to the IRC server via UPSTREAM.
+  Includes flood protection: enforces minimum 2s between sends.
+  The throttle is inside the lock to prevent concurrent threads from bypassing it."
   (bt:with-lock-held ((upstream-lock upstream))
     (when (upstream-stream upstream)
+      ;; Flood protection: sleep inside lock so concurrent callers queue up
+      (let* ((now (get-internal-real-time))
+             (elapsed (/ (- now (upstream-last-send-time upstream))
+                         (float internal-time-units-per-second)))
+             (min-interval 2.0))
+        (when (< elapsed min-interval)
+          (sleep (- min-interval elapsed))))
+      (setf (upstream-last-send-time upstream) (get-internal-real-time))
+      (format t "[CLoak] >> ~a: ~a~%" (upstream-network-name upstream) raw-line)
+      (force-output)
       (handler-case
           (progn
             (write-string raw-line (upstream-stream upstream))
@@ -165,8 +194,20 @@
   (upstream-disconnect upstream)
   (format t "[CLoak] Upstream ~a disconnected~%" (upstream-network-name upstream))
   (force-output)
+  ;; Notify state change
+  (when (upstream-on-state-change upstream)
+    (handler-case
+        (funcall (upstream-on-state-change upstream) upstream :disconnected)
+      (error (e)
+        (format t "[CLoak] State change handler error: ~a~%" e)
+        (force-output))))
   ;; Auto-reconnect
   (when (upstream-reconnect-p upstream)
+    ;; If we were connected stably (>30s), reset attempt counter
+    (let ((uptime (- (get-universal-time) (upstream-last-activity upstream))))
+      (if (> uptime 30)
+          (setf (upstream-reconnect-attempts upstream) 0)
+          (incf (upstream-reconnect-attempts upstream))))
     (upstream--reconnect-loop upstream)))
 
 (defun upstream--handle-line (upstream line)
@@ -316,9 +357,9 @@ If JITTER is T, adds random jitter between base and 1.5x base."
            (sleep delay)
            (when (upstream-reconnect-p upstream)
              (if (upstream-connect upstream)
-                 (progn
-                   (setf (upstream-reconnect-attempts upstream) 0)
-                   (return))
+                 ;; Connected - only reset attempts if connection stays stable
+                 ;; (the next disconnect will check stability via last-activity)
+                 (return)
                  (incf (upstream-reconnect-attempts upstream))))))
 
 (defun upstream--track-state (upstream msg)
@@ -328,9 +369,22 @@ If JITTER is T, adds random jitter between base and 1.5x base."
       ;; Registration complete
       ((string= command "001")
        (setf (upstream-state upstream) :connected)
-       ;; Autojoin channels
-       (dolist (chan (cloak.config:network-autojoin (upstream-config upstream)))
-         (upstream-send upstream (irc-join chan))))
+       ;; Notify state change
+       (when (upstream-on-state-change upstream)
+         (handler-case
+             (funcall (upstream-on-state-change upstream) upstream :connected)
+           (error (e)
+             (format t "[CLoak] State change handler error: ~a~%" e)
+             (force-output))))
+       ;; Autojoin channels (staggered to avoid Excess Flood)
+       (let ((channels (cloak.config:network-autojoin (upstream-config upstream))))
+         (when channels
+           (bt:make-thread
+            (lambda ()
+              (dolist (chan channels)
+                (upstream-send upstream (irc-join chan))
+                (sleep 1)))
+            :name "cloak-autojoin"))))
       ;; Nick in use
       ((string= command "433")
        (let* ((config (upstream-config upstream))
@@ -343,34 +397,87 @@ If JITTER is T, adds random jitter between base and 1.5x base."
                           (t (format nil "~a_" current)))))
          (setf (upstream-nick upstream) new-nick)
          (upstream-send upstream (irc-nick new-nick))))
-      ;; Keepnick: reclaim desired nick when someone with it quits
+      ;; QUIT - remove nick from all channels + keepnick
       ((string= command "QUIT")
        (let* ((config (upstream-config upstream))
               (desired (cloak.config:network-nick config))
               (quitter (source-nick (irc-message-source msg))))
+         ;; Remove from all channel nick lists
+         (maphash (lambda (chan nicks)
+                    (declare (ignore chan))
+                    (remhash quitter nicks))
+                  (upstream-channel-nicks upstream))
+         ;; Keepnick: reclaim desired nick when holder quits
          (when (and (not (string-equal (upstream-nick upstream) desired))
                     (string-equal quitter desired))
            (upstream-send upstream (irc-nick desired)))))
-      ;; Track our nick
-      ((and (string= command "NICK")
-            (string-equal (source-nick (irc-message-source msg))
-                          (upstream-nick upstream)))
-       (setf (upstream-nick upstream) (first (irc-message-params msg))))
-      ;; Track channels (store key if present)
+      ;; NICK - update nick across all channels + track our own
+      ((string= command "NICK")
+       (let ((old-nick (source-nick (irc-message-source msg)))
+             (new-nick (first (irc-message-params msg))))
+         ;; Update in all channel nick lists
+         (maphash (lambda (chan nicks)
+                    (declare (ignore chan))
+                    (when (gethash old-nick nicks)
+                      (remhash old-nick nicks)
+                      (setf (gethash new-nick nicks) t)))
+                  (upstream-channel-nicks upstream))
+         ;; Track our own nick
+         (when (string-equal old-nick (upstream-nick upstream))
+           (setf (upstream-nick upstream) new-nick))))
+      ;; JOIN - track channel + add nick
       ((string= command "JOIN")
-       (when (string-equal (source-nick (irc-message-source msg))
-                           (upstream-nick upstream))
-         (let ((chan (first (irc-message-params msg)))
-               (key (second (irc-message-params msg))))
-           (setf (gethash chan (upstream-channels upstream))
-                 (or key t)))))
+       (let ((chan (first (irc-message-params msg)))
+             (nick (source-nick (irc-message-source msg))))
+         ;; If it's us joining, register the channel
+         (when (string-equal nick (upstream-nick upstream))
+           (let ((key (second (irc-message-params msg))))
+             (setf (gethash chan (upstream-channels upstream))
+                   (or key t)))
+           ;; Initialize nick set for this channel
+           (setf (gethash chan (upstream-channel-nicks upstream))
+                 (make-hash-table :test 'equal)))
+         ;; Add the nick to the channel's nick set
+         (let ((nicks (gethash chan (upstream-channel-nicks upstream))))
+           (when nicks
+             (setf (gethash nick nicks) t)))))
+      ;; PART - remove nick from channel
       ((string= command "PART")
-       (when (string-equal (source-nick (irc-message-source msg))
-                           (upstream-nick upstream))
-         (remhash (first (irc-message-params msg))
-                  (upstream-channels upstream))))
+       (let ((chan (first (irc-message-params msg)))
+             (nick (source-nick (irc-message-source msg))))
+         (if (string-equal nick (upstream-nick upstream))
+             ;; We left - remove channel entirely
+             (progn
+               (remhash chan (upstream-channels upstream))
+               (remhash chan (upstream-channel-nicks upstream)))
+             ;; Someone else left - remove from nick set
+             (let ((nicks (gethash chan (upstream-channel-nicks upstream))))
+               (when nicks
+                 (remhash nick nicks))))))
+      ;; KICK - remove kicked nick from channel
       ((string= command "KICK")
-       (when (string-equal (second (irc-message-params msg))
-                           (upstream-nick upstream))
-         (remhash (first (irc-message-params msg))
-                  (upstream-channels upstream)))))))
+       (let ((chan (first (irc-message-params msg)))
+             (kicked (second (irc-message-params msg))))
+         (if (string-equal kicked (upstream-nick upstream))
+             ;; We were kicked - remove channel entirely
+             (progn
+               (remhash chan (upstream-channels upstream))
+               (remhash chan (upstream-channel-nicks upstream)))
+             ;; Someone else kicked - remove from nick set
+             (let ((nicks (gethash chan (upstream-channel-nicks upstream))))
+               (when nicks
+                 (remhash kicked nicks))))))
+      ;; 353 (RPL_NAMREPLY) - bulk populate nick list
+      ((string= command "353")
+       ;; Params: <nick> <chan-type> <channel> :<nick1> <nick2> ...
+       (let* ((chan (third (irc-message-params msg)))
+              (names-str (fourth (irc-message-params msg)))
+              (nicks (gethash chan (upstream-channel-nicks upstream))))
+         (when (and nicks names-str)
+           (dolist (entry (split-sequence:split-sequence #\Space names-str
+                                                         :remove-empty-subseqs t))
+             ;; Strip mode prefixes (@+%~&)
+             (let ((nick (string-left-trim "@+%~&" entry)))
+               (when (plusp (length nick))
+                 (setf (gethash nick nicks) t))))))))))
+

@@ -133,7 +133,7 @@ Handles IRCv3 tags, source prefix, command, and parameters."
       (setf command (if space
                         (subseq line pos space)
                         (subseq line pos)))
-      (when space (setf pos (1+ space))))
+      (setf pos (if space (1+ space) len)))
     ;; Skip whitespace
     (loop while (and (< pos len) (char= (char line pos) #\Space))
           do (incf pos))

@@ -10,6 +10,8 @@
    (stream :initarg :stream :accessor client-stream)
    (nick :initform nil :accessor client-nick)
    (user :initform nil :accessor client-user)
+   (ident :initform nil :accessor client-ident
+          :documentation "The username from the IRC USER command. Used to distinguish clients.")
    (authenticated-p :initform nil :accessor client-authenticated-p)
    (network :initform nil :accessor client-network
             :documentation "Which upstream network this client is attached to.")
@@ -91,6 +93,10 @@
        (setf (client-nick client)
              (first (cloak.protocol:irc-message-params msg))))
       ((string= command "USER")
+       ;; Store the ident (username from USER command) for per-client tracking
+       (let ((ident (first (cloak.protocol:irc-message-params msg))))
+         (when ident
+           (setf (client-ident client) ident)))
        ;; USER received - try to authenticate
        (when (client-message-handler client)
          (funcall (client-message-handler client) client line msg)))
@@ -155,9 +161,10 @@ ON-CONNECT is called with each new downstream-client."
               do (handler-case
                      (let* ((stream (if tls-cert
                                        (cl+ssl:make-ssl-server-stream
-                                        client-sock
+                                        (iolib:socket-os-fd client-sock)
                                         :certificate tls-cert
-                                        :key tls-key)
+                                        :key tls-key
+                                        :external-format '(:utf-8 :eol-style :crlf))
                                        client-sock))
                             (client (make-instance 'downstream-client
                                       :socket client-sock

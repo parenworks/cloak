@@ -22,7 +22,10 @@ built with Fluxion."
                "ironclad"
                "local-time"
                "cl-json"
-               "fluxion")
+               "spinneret"
+               "fluxion"
+               "fluxion/client"
+               "woo")
   :serial t
   :components
   ((:module "src"
@@ -36,6 +39,7 @@ built with Fluxion."
      (:file "downstream")
      (:file "bouncer")
      (:file "modules")
+     (:file "modules-builtin")
      (:file "main")))
    (:module "web"
     :serial t
@@ -51,7 +55,15 @@ built with Fluxion."
                 :serial t
                 :components ((:file "package")
                              (:file "test-protocol")
+                             (:file "test-protocol-extended")
                              (:file "test-buffer")
-                             (:file "test-bouncer"))))
+                             (:file "test-buffer-extended")
+                             (:file "test-config-extended")
+                             (:file "test-downstream")
+                             (:file "test-upstream-state")
+                             (:file "test-bouncer")
+                             (:file "test-bouncer-relay")
+                             (:file "test-modules")
+                             (:file "test-nick-tracking"))))
   :perform (test-op (o s)
              (uiop:symbol-call :fiveam :run! :cloak-tests)))
