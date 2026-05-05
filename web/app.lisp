@@ -51,9 +51,15 @@
   (let* ((shell (server:session-component session "app-shell"))
          (comp-id (page-component-id page-name))
          (content (server:session-component session comp-id)))
+    ;; Remove old child from composition tree
+    (when (shell-content shell)
+      (comp:remove-child shell (shell-content shell)))
     (setf (shell-current-page shell) page-name)
     (setf (shell-user-name shell) (or (server:session-user session) ""))
     (setf (shell-content shell) content)
+    ;; Wire new child into composition tree
+    (when content
+      (comp:add-child shell content))
     session))
 
 (defun page-component-id (page-name)
@@ -103,35 +109,46 @@
 
 (comp:defaction app-shell :navigate (c params)
   (let* ((page (cdr (assoc :page params)))
-         (session (find-session-for-component c)))
+         (session (comp:component-session c)))
     (when (and page session)
-      (let ((comp (server:session-component session (page-component-id page))))
+      (let ((new-content (server:session-component session (page-component-id page))))
+        ;; Remove old child, wire new one
+        (when (shell-content c)
+          (comp:remove-child c (shell-content c)))
         (setf (shell-current-page c) page)
-        (setf (shell-content c) comp))))
+        (setf (shell-content c) new-content)
+        (when new-content
+          (comp:add-child c new-content)))))
   nil)
 
 (comp:defaction app-shell :navigate-user (c params)
   (let* ((username (cdr (assoc :username params)))
-         (session (find-session-for-component c)))
+         (session (comp:component-session c)))
     (when (and username session)
       (let ((detail (server:session-component session "user-detail")))
+        (when (shell-content c)
+          (comp:remove-child c (shell-content c)))
         (setf (detail-target-user detail) username)
         (setf (detail-message detail) nil)
         (setf (shell-current-page c) "user-detail")
-        (setf (shell-content c) detail))))
+        (setf (shell-content c) detail)
+        (comp:add-child c detail))))
   nil)
 
 (comp:defaction app-shell :navigate-network (c params)
   (let* ((username (cdr (assoc :username params)))
          (netname (cdr (assoc :network params)))
-         (session (find-session-for-component c)))
+         (session (comp:component-session c)))
     (when (and username netname session)
       (let ((editor (server:session-component session "network-edit")))
+        (when (shell-content c)
+          (comp:remove-child c (shell-content c)))
         (setf (netedit-target-user editor) username)
         (setf (netedit-target-network editor) netname)
         (setf (netedit-message editor) nil)
         (setf (shell-current-page c) "network-edit")
-        (setf (shell-content c) editor))))
+        (setf (shell-content c) editor)
+        (comp:add-child c editor))))
   nil)
 
 ;;; --- Auth actions ---
@@ -147,7 +164,7 @@
              (config:verify-password password
                                      (config:user-password-hash user-cfg)))
         ;; Auth success - authenticate session and redirect
-        (let ((session (find-session-for-component c)))
+        (let ((session (comp:component-session c)))
           (when session
             (server:authenticate session username))
           (list (events:make-redirect-event "/")))
@@ -235,7 +252,7 @@
   (let* ((new-pw (cdr (assoc :new-password params)))
          (confirm (cdr (assoc :confirm-password params)))
          (b (bouncer-instance))
-         (session (find-session-for-component c))
+         (session (comp:component-session c))
          (username (when session (server:session-user session))))
     (cond
       ((or (null new-pw) (< (length new-pw) 6))
@@ -803,19 +820,7 @@ SERVER is the Clack backend: :woo (default) or :hunchentoot."
     (format t "[CLoak] Fluxion web admin running~%")
     *web-app*))
 
-(defun find-session-for-component (component)
-  "Find the session that owns COMPONENT. Scans all sessions."
-  (when *web-app*
-    (bt:with-lock-held ((server:app-session-lock *web-app*))
-      (maphash (lambda (sid session)
-                 (declare (ignore sid))
-                 (maphash (lambda (cid comp)
-                            (declare (ignore cid))
-                            (when (eq comp component)
-                              (return-from find-session-for-component session)))
-                          (server:session-components session)))
-               (server:app-sessions *web-app*))))
-  nil)
+;;; find-session-for-component removed - use (comp:component-session c) instead.
 
 (defun install-upstream-state-hooks ()
   "Install on-state-change callbacks on all bouncer upstreams so that
