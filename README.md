@@ -43,6 +43,24 @@ any messages you missed.
 - Lisp config file (human-editable, web-editable)
 - Config auto-generated on first run
 
+## Screenshots
+
+### Dashboard
+![Dashboard](images/dashboard.png)
+At-a-glance overview showing uptime, connected networks, attached clients, active channels, and buffered messages. Network status and connected clients are listed below.
+
+### Networks
+![Networks](images/networks.png)
+Per-user network management. View connection status, connect/disconnect networks, and add or edit network configurations.
+
+### Modules
+![Modules](images/modules.png)
+ZNC-style module system with enable/disable toggles and inline settings. Modules extend CLoak with features like auto-away, MOTD blocking, playback extras, and per-client buffer tracking.
+
+### Configuration
+![Configuration](images/config.png)
+Edit IRC listener settings (host, port, TLS), web admin binding, and log level directly from the browser. Also provides raw config access for advanced users.
+
 ## Dependencies
 
 - SBCL (or CCL)
