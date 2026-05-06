@@ -55,7 +55,11 @@
 
 (defpackage #:cloak.protocol
   (:use #:cl)
+  (:local-nicknames (#:bt #:bordeaux-threads))
   (:export
+   ;; Thread-safe logging
+   #:*log-lock*
+   #:cloak-log
    ;; IRC message structure
    #:irc-message
    #:make-irc-message
@@ -181,7 +185,7 @@
    #:playback-buffer))
 
 (defpackage #:cloak.modules
-  (:use #:cl)
+  (:use #:cl #:cloak.protocol)
   (:local-nicknames (#:bt #:bordeaux-threads))
   (:export
    ;; Module protocol
@@ -248,7 +252,7 @@
    #:scan-plugins))
 
 (defpackage #:cloak
-  (:use #:cl)
+  (:use #:cl #:cloak.protocol)
   (:export
    ;; Top-level entry points
    #:start

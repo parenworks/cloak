@@ -223,8 +223,7 @@ Buffer it and relay to any attached clients."
       (unless (find network (bouncer-clients bouncer)
                     :key #'client-network :test #'string-equal)
         (bouncer--set-away bouncer client network t))))
-  (format t "[CLoak] Client detached~%")
-  (force-output))
+  (cloak-log "[CLoak] Client detached~%"))
 
 ;;; --- Client Message Handling ---
 
@@ -325,8 +324,7 @@ Buffer it and relay to any attached clients."
                    (let ((text (second (cloak.protocol:irc-message-params msg))))
                      (and text (search "/" text))))))
        ;; Drop - client is trying to auth with NickServ using bouncer password
-       (format t "[CLoak] Dropped NickServ identify from client (CLoak handles SASL)~%")
-       (force-output))
+       (cloak-log "[CLoak] Dropped NickServ identify from client (CLoak handles SASL)~%"))
       ;; Everything else - forward to upstream
       (upstream
        ;; Track sender for echo-message dedup
@@ -375,8 +373,7 @@ Finds the upstream using any user who owns that network."
                    (when msgs (sleep 0.05)))))
              (bouncer-buffers bouncer))
     (when (plusp total)
-      (format t "[CLoak] Played back ~d messages for ~a~%" total user-name)
-      (force-output))
+      (cloak-log "[CLoak] Played back ~d messages for ~a~%" total user-name))
     ;; Update playback timestamp
     (setf (client-last-playback client) (get-universal-time))))
 
@@ -384,7 +381,7 @@ Finds the upstream using any user who owns that network."
 
 (defun start-bouncer (bouncer)
   "Start the CLoak bouncer."
-  (format t "~&[CLoak] Starting bouncer v~a~%"
+  (cloak-log "~&[CLoak] Starting bouncer v~a~%"
           cloak:*version*)
   (setf (bouncer-running-p bouncer) t)
   (setf *bouncer* bouncer)
@@ -395,7 +392,7 @@ Finds the upstream using any user who owns that network."
     (when modules
       (dolist (name modules)
         (cloak.modules:load-module name bouncer))
-      (format t "[CLoak] Loaded ~d module~:p~%" (length modules))))
+      (cloak-log "[CLoak] Loaded ~d module~:p~%" (length modules))))
   ;; Connect all upstreams
   (bouncer--connect-upstreams bouncer)
   ;; Start client listener
@@ -406,12 +403,12 @@ Finds the upstream using any user who owns that network."
                     :tls-key (config-tls-key cfg)
                     :on-connect (lambda (client)
                                   (bouncer--on-new-client bouncer client))))
-  (format t "[CLoak] Bouncer running~%")
+  (cloak-log "[CLoak] Bouncer running~%")
   bouncer)
 
 (defun stop-bouncer (bouncer)
   "Stop the CLoak bouncer."
-  (format t "[CLoak] Stopping bouncer...~%")
+  (cloak-log "[CLoak] Stopping bouncer...~%")
   (setf (bouncer-running-p bouncer) nil)
   ;; Disconnect all clients
   (bt:with-lock-held ((bouncer-lock bouncer))
@@ -431,7 +428,7 @@ Finds the upstream using any user who owns that network."
   ;; Stop listener
   (stop-listener)
   (setf *bouncer* nil)
-  (format t "[CLoak] Bouncer stopped~%"))
+  (cloak-log "[CLoak] Bouncer stopped~%"))
 
 ;;; --- Autojoin Persistence ---
 
@@ -443,7 +440,7 @@ Finds the upstream using any user who owns that network."
         (setf (network-autojoin net-cfg)
               (append (network-autojoin net-cfg) (list channel)))
         (save-config (bouncer-config bouncer))
-        (format t "[CLoak] Added ~a to autojoin for ~a/~a~%"
+        (cloak-log "[CLoak] Added ~a to autojoin for ~a/~a~%"
                 channel user-name network-name)))))
 
 (defun bouncer--remove-autojoin (bouncer user-name network-name channel)
@@ -454,7 +451,7 @@ Finds the upstream using any user who owns that network."
         (setf (network-autojoin net-cfg)
               (remove channel (network-autojoin net-cfg) :test #'string-equal))
         (save-config (bouncer-config bouncer))
-        (format t "[CLoak] Removed ~a from autojoin for ~a/~a~%"
+        (cloak-log "[CLoak] Removed ~a from autojoin for ~a/~a~%"
                 channel user-name network-name)))))
 
 ;;; --- *status Commands ---
@@ -654,7 +651,7 @@ Finds the upstream using any user who owns that network."
                        (verify-password password (user-password-hash user-cfg)))
                   ;; Auth success
                   (progn
-                    (format t "[CLoak] Authenticated: ~a -> ~a~%" user-name network)
+                    (cloak-log "[CLoak] Authenticated: ~a -> ~a~%" user-name network)
                     (attach-client bouncer client user-name network))
                   ;; Auth failure
                   (progn

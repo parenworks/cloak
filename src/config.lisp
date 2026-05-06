@@ -171,7 +171,7 @@ Falls back to legacy ~/.cloak/config.lisp if XDG path does not exist."
   (unless (probe-file path)
     (if (probe-file *legacy-config-path*)
         (progn
-          (format t "[CLoak] Migrating config from ~a to ~a~%"
+          (cloak.protocol:cloak-log "[CLoak] Migrating config from ~a to ~a~%"
                   *legacy-config-path* path)
           (ensure-directories-exist path)
           (uiop:copy-file *legacy-config-path* path))
@@ -210,9 +210,9 @@ Falls back to legacy ~/.cloak/config.lisp if XDG path does not exist."
                                  :admin-p t
                                  :networks nil)))))
     (save-config config path)
-    (format t "~&[CLoak] Generated default config at ~a~%" path)
-    (format t "[CLoak] Default login: admin / ~a~%" *default-password*)
-    (format t "[CLoak] You will be prompted to change the password on first login.~%")
+    (cloak.protocol:cloak-log "~&[CLoak] Generated default config at ~a~%" path)
+    (cloak.protocol:cloak-log "[CLoak] Default login: admin / ~a~%" *default-password*)
+    (cloak.protocol:cloak-log "[CLoak] You will be prompted to change the password on first login.~%")
     config))
 
 (defun default-password-p (user-cfg)

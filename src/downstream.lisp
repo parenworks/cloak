@@ -67,7 +67,7 @@
                  (when (plusp (length trimmed))
                    (client--handle-line client trimmed))))
     (error (e)
-      (format t "[CLoak] Client read error: ~a~%" e)))
+      (cloak-log "[CLoak] Client read error: ~a~%" e)))
   (client-disconnect client))
 
 (defun client--handle-line (client line)
@@ -116,7 +116,7 @@
                                       on-connect)
   "Start listening for IRC client connections on HOST:PORT.
 ON-CONNECT is called with each new downstream-client."
-  (format t "[CLoak] Starting listener on ~a:~d~a~%"
+  (cloak-log "[CLoak] Starting listener on ~a:~d~a~%"
           host port (if tls-cert " (TLS)" ""))
   (let ((sock (iolib:make-socket :connect :passive
                                  :address-family :internet
@@ -145,7 +145,7 @@ ON-CONNECT is called with each new downstream-client."
   (when *listener-socket*
     (ignore-errors (close *listener-socket*))
     (setf *listener-socket* nil))
-  (format t "[CLoak] Listener stopped~%"))
+  (cloak-log "[CLoak] Listener stopped~%"))
 
 (defun listener--accept-loop (server-socket &key tls-cert tls-key on-connect)
   "Accept loop for incoming IRC client connections."
@@ -154,8 +154,7 @@ ON-CONNECT is called with each new downstream-client."
             for client-sock = (handler-case
                                   (iolib:accept-connection server-socket :wait t)
                                 (error (e)
-                                  (format t "[CLoak] Accept wait error: ~a~%" e)
-                                  (force-output)
+                                  (cloak-log "[CLoak] Accept wait error: ~a~%" e)
                                   nil))
             when client-sock
               do (handler-case
@@ -169,9 +168,8 @@ ON-CONNECT is called with each new downstream-client."
                             (client (make-instance 'downstream-client
                                       :socket client-sock
                                       :stream stream)))
-                       (format t "[CLoak] Client connected from ~a~%"
+                       (cloak-log "[CLoak] Client connected from ~a~%"
                                (iolib:remote-host client-sock))
-                       (force-output)
                        ;; Start client read thread
                        (setf (client-read-thread client)
                              (bt:make-thread
@@ -181,8 +179,7 @@ ON-CONNECT is called with each new downstream-client."
                        (when on-connect
                          (funcall on-connect client)))
                    (error (e)
-                     (format t "[CLoak] Accept error: ~a~%" e)
-                     (force-output)
+                     (cloak-log "[CLoak] Accept error: ~a~%" e)
                      (ignore-errors (close client-sock)))))
     (error (e)
-      (format t "[CLoak] Listener error: ~a~%" e))))
+      (cloak-log "[CLoak] Listener error: ~a~%" e))))

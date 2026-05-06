@@ -30,7 +30,7 @@
   (:documentation "Called when MODULE is loaded into BOUNCER.")
   (:method ((module module) bouncer)
     (declare (ignore bouncer))
-    (format t "[CLoak] Module loaded: ~a~%" (module-name module))))
+    (cloak-log "[CLoak] Module loaded: ~a~%" (module-name module))))
 
 (defgeneric on-unload (module bouncer)
   (:documentation "Called when MODULE is unloaded from BOUNCER.")
@@ -41,7 +41,7 @@
       (when (bt:thread-alive-p timer)
         (bt:destroy-thread timer)))
     (setf (module-timers module) nil)
-    (format t "[CLoak] Module unloaded: ~a~%" (module-name module))))
+    (cloak-log "[CLoak] Module unloaded: ~a~%" (module-name module))))
 
 ;;; --- Message Hooks ---
 
@@ -146,7 +146,7 @@ NAME is used for the thread name. Returns the timer thread."
                (sleep interval)
                (handler-case (funcall function)
                  (error (e)
-                   (format t "[CLoak] Module ~a timer error: ~a~%"
+                   (cloak-log "[CLoak] Module ~a timer error: ~a~%"
                            (module-name module) e)))))
            :name (format nil "cloak-mod-~a-~a" (module-name module) name))))
     (push thread (module-timers module))
@@ -174,7 +174,7 @@ NAME is used for the thread name. Returns the timer thread."
           (with-open-file (in path :direction :input)
             (read in nil nil))
         (error (e)
-          (format t "[CLoak] Failed to load data for module ~a: ~a~%"
+          (cloak-log "[CLoak] Failed to load data for module ~a: ~a~%"
                   module-name e)
           nil)))))
 
@@ -276,11 +276,11 @@ Example:
 (defun load-module (name bouncer)
   "Instantiate and load module NAME into BOUNCER."
   (when (module-active-p name)
-    (format t "[CLoak] Module ~a already loaded~%" name)
+    (cloak-log "[CLoak] Module ~a already loaded~%" name)
     (return-from load-module (active-module name)))
   (let ((entry (find-module-registration name)))
     (unless entry
-      (format t "[CLoak] Unknown module: ~a~%" name)
+      (cloak-log "[CLoak] Unknown module: ~a~%" name)
       (return-from load-module nil))
     (let* ((class (getf entry :class))
            (desc (getf entry :description))
@@ -316,7 +316,7 @@ Example:
                    (when (member result '(:halt :drop))
                      (return-from run-upstream-hooks result)))
                (error (e)
-                 (format t "[CLoak] Module ~a upstream hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a upstream hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*)
   nil)
@@ -330,7 +330,7 @@ Example:
                    (when (member result '(:halt :drop))
                      (return-from run-downstream-hooks result)))
                (error (e)
-                 (format t "[CLoak] Module ~a downstream hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a downstream hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*)
   nil)
@@ -342,7 +342,7 @@ Example:
              (handler-case
                  (on-client-attach module bouncer client user-name network-name)
                (error (e)
-                 (format t "[CLoak] Module ~a attach hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a attach hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -353,7 +353,7 @@ Example:
              (handler-case
                  (on-client-detach module bouncer client)
                (error (e)
-                 (format t "[CLoak] Module ~a detach hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a detach hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -364,7 +364,7 @@ Example:
              (handler-case
                  (on-upstream-connect module bouncer upstream)
                (error (e)
-                 (format t "[CLoak] Module ~a connect hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a connect hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -375,7 +375,7 @@ Example:
              (handler-case
                  (on-upstream-disconnect module bouncer upstream)
                (error (e)
-                 (format t "[CLoak] Module ~a disconnect hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a disconnect hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -386,7 +386,7 @@ Example:
              (handler-case
                  (on-channel-join module bouncer upstream channel)
                (error (e)
-                 (format t "[CLoak] Module ~a join hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a join hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -397,7 +397,7 @@ Example:
              (handler-case
                  (on-channel-part module bouncer upstream channel)
                (error (e)
-                 (format t "[CLoak] Module ~a part hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a part hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -408,7 +408,7 @@ Example:
              (handler-case
                  (on-channel-kick module bouncer upstream channel kicker reason)
                (error (e)
-                 (format t "[CLoak] Module ~a kick hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a kick hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -421,7 +421,7 @@ Example:
                    (when (eq result :drop)
                      (return-from run-new-connection-hooks :drop)))
                (error (e)
-                 (format t "[CLoak] Module ~a new-connection hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a new-connection hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*)
   nil)
@@ -433,7 +433,7 @@ Example:
              (handler-case
                  (on-auth-failure module bouncer client-ip)
                (error (e)
-                 (format t "[CLoak] Module ~a auth-failure hook error: ~a~%"
+                 (cloak-log "[CLoak] Module ~a auth-failure hook error: ~a~%"
                          (module-name module) e))))
            *active-modules*))
 
@@ -453,12 +453,12 @@ Returns the number of plugins loaded."
       (dolist (file (directory (merge-pathnames "*.lisp" dir)))
         (handler-case
             (progn
-              (format t "[CLoak] Loading plugin: ~a~%" (file-namestring file))
+              (cloak-log "[CLoak] Loading plugin: ~a~%" (file-namestring file))
               (load file)
               (incf count))
           (error (e)
-            (format t "[CLoak] Failed to load plugin ~a: ~a~%"
+            (cloak-log "[CLoak] Failed to load plugin ~a: ~a~%"
                     (file-namestring file) e)))))
     (when (plusp count)
-      (format t "[CLoak] Loaded ~d plugin~:p from ~a~%" count dir))
+      (cloak-log "[CLoak] Loaded ~d plugin~:p from ~a~%" count dir))
     count))

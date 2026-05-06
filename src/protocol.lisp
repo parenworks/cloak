@@ -3,6 +3,17 @@
 
 (in-package #:cloak.protocol)
 
+;;; --- Thread-safe Logging ---
+
+(defvar *log-lock* (bt:make-lock "cloak-log")
+  "Global lock for log output to prevent interleaved lines.")
+
+(defun cloak-log (format-string &rest args)
+  "Thread-safe logging to *standard-output*."
+  (bt:with-lock-held (*log-lock*)
+    (apply #'format t format-string args)
+    (force-output)))
+
 ;;; --- IRC Message Structure ---
 
 (defstruct irc-message

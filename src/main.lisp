@@ -13,15 +13,15 @@
   "Start the CLoak IRC bouncer.
 Loads config from CONFIG-PATH, starts upstream connections,
 client listener, and optionally the web admin interface."
-  (format t "~&~%")
-  (format t "   ██████╗██╗      ██████╗  █████╗ ██╗  ██╗~%")
-  (format t "  ██╔════╝██║     ██╔═══██╗██╔══██╗██║ ██╔╝~%")
-  (format t "  ██║     ██║     ██║   ██║███████║█████╔╝ ~%")
-  (format t "  ██║     ██║     ██║   ██║██╔══██║██╔═██╗ ~%")
-  (format t "  ╚██████╗███████╗╚██████╔╝██║  ██║██║  ██╗~%")
-  (format t "   ╚═════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝~%")
-  (format t "~%  CLoak IRC Bouncer v~a~%" *version*)
-  (format t "  Common Lisp • Fluxion Web UI~%~%")
+  (cloak-log "~&~%")
+  (cloak-log "   ██████╗██╗      ██████╗  █████╗ ██╗  ██╗~%")
+  (cloak-log "  ██╔════╝██║     ██╔═══██╗██╔══██╗██║ ██╔╝~%")
+  (cloak-log "  ██║     ██║     ██║   ██║███████║█████╔╝ ~%")
+  (cloak-log "  ██║     ██║     ██║   ██║██╔══██║██╔═██╗ ~%")
+  (cloak-log "  ╚██████╗███████╗╚██████╔╝██║  ██║██║  ██╗~%")
+  (cloak-log "   ╚═════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝~%")
+  (cloak-log "~%  CLoak IRC Bouncer v~a~%" *version*)
+  (cloak-log "  Common Lisp • Fluxion Web UI~%~%")
 
   ;; Load configuration
   (let ((config (cloak.config:load-config config-path)))
@@ -37,7 +37,7 @@ client listener, and optionally the web admin interface."
 
 (defun stop ()
   "Stop the running CLoak bouncer."
-  (format t "[CLoak] Stopping web admin~%")
+  (cloak-log "[CLoak] Stopping web admin~%")
   (ignore-errors
     (funcall (uiop:find-symbol* '#:stop-web-admin '#:cloak.web)))
   (when cloak.bouncer:*bouncer*
@@ -58,17 +58,17 @@ Starts the bouncer and blocks until interrupted."
       (setf *shutdown-requested* t)))
   (let ((bouncer (start)))
     (when bouncer
-      (format t "[CLoak] Press Ctrl+C to stop~%")
+      (cloak-log "[CLoak] Press Ctrl+C to stop~%")
       (handler-case
           (loop
             (sleep 1)
             (when *shutdown-requested*
-              (format t "~%[CLoak] SIGTERM received, shutting down...~%")
+              (cloak-log "~%[CLoak] SIGTERM received, shutting down...~%")
               (stop)
               (return)))
         (#+sbcl sb-sys:interactive-interrupt
          #+ccl ccl:interrupt-signal-condition
          #-(or sbcl ccl) condition
          ()
-         (format t "~%[CLoak] Shutting down...~%")
+         (cloak-log "~%[CLoak] Shutting down...~%")
          (stop))))))

@@ -71,7 +71,7 @@
          (use-tls (cloak.config:network-tls config)))
     (handler-case
         (progn
-          (format t "~&[CLoak] Connecting to ~a:~d~a...~%"
+          (cloak-log "~&[CLoak] Connecting to ~a:~d~a...~%"
                   server port (if use-tls " (TLS)" ""))
           (let ((sock (iolib:make-socket :connect :active
                                           :address-family :internet
@@ -97,10 +97,10 @@
                      (lambda () (upstream--read-loop upstream))
                      :name (format nil "cloak-upstream-~a"
                                    (upstream-network-name upstream))))
-              (format t "[CLoak] Connected to ~a~%" (upstream-network-name upstream))
+              (cloak-log "[CLoak] Connected to ~a~%" (upstream-network-name upstream))
               t)))
       (error (e)
-        (format t "[CLoak] Failed to connect to ~a: ~a~%"
+        (cloak-log "[CLoak] Failed to connect to ~a: ~a~%"
                 (upstream-network-name upstream) e)
         (upstream-disconnect upstream)
         nil))))
@@ -141,8 +141,8 @@ When QUIT is true, send QUIT first for a clean shutdown."
         (when (< elapsed min-interval)
           (sleep (- min-interval elapsed))))
       (setf (upstream-last-send-time upstream) (get-internal-real-time))
-      (format t "[CLoak] >> ~a: ~a~%" (upstream-network-name upstream) raw-line)
-      (force-output)
+      (unless (string= (subseq raw-line 0 (min 4 (length raw-line))) "PONG")
+        (cloak-log "[CLoak] >> ~a: ~a~%" (upstream-network-name upstream) raw-line))
       (handler-case
           (progn
             (write-string raw-line (upstream-stream upstream))
@@ -150,9 +150,8 @@ When QUIT is true, send QUIT first for a clean shutdown."
             (write-string (string #\Newline) (upstream-stream upstream))
             (force-output (upstream-stream upstream)))
         (error (e)
-          (format t "[CLoak] Send error on ~a: ~a~%"
-                  (upstream-network-name upstream) e)
-          (force-output)
+          (cloak-log "[CLoak] Send error on ~a: ~a~%"
+                     (upstream-network-name upstream) e)
           ;; Don't call disconnect here (would deadlock on lock)
           (setf (upstream-state upstream) :disconnected))))))
 
@@ -188,19 +187,17 @@ When QUIT is true, send QUIT first for a clean shutdown."
                    (setf (upstream-last-activity upstream) (get-universal-time))
                    (upstream--handle-line upstream trimmed))))
     (error (e)
-      (format t "[CLoak] Read error on ~a: ~a~%"
+      (cloak-log "[CLoak] Read error on ~a: ~a~%"
               (upstream-network-name upstream) e)))
   ;; Cleanup
   (upstream-disconnect upstream)
-  (format t "[CLoak] Upstream ~a disconnected~%" (upstream-network-name upstream))
-  (force-output)
+  (cloak-log "[CLoak] Upstream ~a disconnected~%" (upstream-network-name upstream))
   ;; Notify state change
   (when (upstream-on-state-change upstream)
     (handler-case
         (funcall (upstream-on-state-change upstream) upstream :disconnected)
       (error (e)
-        (format t "[CLoak] State change handler error: ~a~%" e)
-        (force-output))))
+        (cloak-log "[CLoak] State change handler error: ~a~%" e))))
   ;; Auto-reconnect
   (when (upstream-reconnect-p upstream)
     ;; If we were connected stably (>30s), reset attempt counter
@@ -239,7 +236,7 @@ When QUIT is true, send QUIT first for a clean shutdown."
               (caps (split-sequence:split-sequence #\Space cap-str
                                                    :remove-empty-subseqs t))
               (want nil))
-         (format t "[CLoak] Server caps: ~{~a~^ ~}~%" caps)
+         (cloak-log "[CLoak] Server caps: ~{~a~^ ~}~%" caps)
          ;; Request caps we want
          (when (member "sasl" caps :test #'string-equal)
            (push "sasl" want))
@@ -267,7 +264,7 @@ When QUIT is true, send QUIT first for a clean shutdown."
       ((and (string= command "CAP")
             (member "ACK" (irc-message-params msg) :test #'string=))
        (let ((acked (car (last (irc-message-params msg)))))
-         (format t "[CLoak] CAP ACK: ~a~%" acked)
+         (cloak-log "[CLoak] CAP ACK: ~a~%" acked)
          (setf (upstream-cap-enabled upstream)
                (split-sequence:split-sequence #\Space acked
                                               :remove-empty-subseqs t))
@@ -281,7 +278,7 @@ When QUIT is true, send QUIT first for a clean shutdown."
       ;; CAP NAK
       ((and (string= command "CAP")
             (member "NAK" (irc-message-params msg) :test #'string=))
-       (format t "[CLoak] CAP NAK: ~a~%" (car (last (irc-message-params msg))))
+       (cloak-log "[CLoak] CAP NAK: ~a~%" (car (last (irc-message-params msg))))
        (upstream-send upstream "CAP END")
        (setf (upstream-cap-state upstream) :done)
        t)
@@ -291,20 +288,20 @@ When QUIT is true, send QUIT first for a clean shutdown."
        t)
       ;; SASL success (903)
       ((string= command "903")
-       (format t "[CLoak] SASL authentication successful~%")
+       (cloak-log "[CLoak] SASL authentication successful~%")
        (upstream-send upstream "CAP END")
        (setf (upstream-cap-state upstream) :done)
        t)
       ;; SASL failure (902, 904, 905)
       ((member command '("902" "904" "905") :test #'string=)
-       (format t "[CLoak] SASL authentication failed: ~a~%"
+       (cloak-log "[CLoak] SASL authentication failed: ~a~%"
                (car (last (irc-message-params msg))))
        (upstream-send upstream "CAP END")
        (setf (upstream-cap-state upstream) :done)
        t)
       ;; SASL logged in (900)
       ((string= command "900")
-       (format t "[CLoak] Logged in as ~a~%"
+       (cloak-log "[CLoak] Logged in as ~a~%"
                (third (irc-message-params msg)))
        t)
       (t nil))))
@@ -314,12 +311,12 @@ When QUIT is true, send QUIT first for a clean shutdown."
   (let ((sasl-type (cloak.config:network-sasl (upstream-config upstream))))
     (if (eq sasl-type :plain)
         (progn
-          (format t "[CLoak] Starting SASL PLAIN~%")
+          (cloak-log "[CLoak] Starting SASL PLAIN~%")
           (upstream-send upstream "AUTHENTICATE PLAIN")
           (setf (upstream-cap-state upstream) :sasl-auth))
         ;; No SASL configured, just end CAP
         (progn
-          (format t "[CLoak] SASL not configured, ending CAP~%")
+          (cloak-log "[CLoak] SASL not configured, ending CAP~%")
           (upstream-send upstream "CAP END")
           (setf (upstream-cap-state upstream) :done)))))
 
@@ -351,9 +348,8 @@ If JITTER is T, adds random jitter between base and 1.5x base."
   (loop while (upstream-reconnect-p upstream)
         for attempt = (upstream-reconnect-attempts upstream)
         for delay = (calculate-backoff attempt :jitter t)
-        do (format t "[CLoak] Reconnecting ~a in ~d seconds (attempt ~d)~%"
+        do (cloak-log "[CLoak] Reconnecting ~a in ~d seconds (attempt ~d)~%"
                    (upstream-network-name upstream) delay (1+ attempt))
-           (force-output)
            (sleep delay)
            (when (upstream-reconnect-p upstream)
              (if (upstream-connect upstream)
@@ -374,8 +370,7 @@ If JITTER is T, adds random jitter between base and 1.5x base."
          (handler-case
              (funcall (upstream-on-state-change upstream) upstream :connected)
            (error (e)
-             (format t "[CLoak] State change handler error: ~a~%" e)
-             (force-output))))
+             (cloak-log "[CLoak] State change handler error: ~a~%" e))))
        ;; Autojoin channels (staggered to avoid Excess Flood)
        (let ((channels (cloak.config:network-autojoin (upstream-config upstream))))
          (when channels

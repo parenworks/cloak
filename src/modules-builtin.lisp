@@ -95,7 +95,7 @@
       (cloak.upstream:upstream-send upstream
         (format nil "PRIVMSG NickServ :IDENTIFY ~a"
                 (nickserv-password mod)))
-      (format t "[CLoak] NickServ: sent IDENTIFY for ~a~%"
+      (cloak-log "[CLoak] NickServ: sent IDENTIFY for ~a~%"
               (cloak.upstream:upstream-network-name upstream))))
   nil)
 
@@ -130,7 +130,7 @@
   (let ((data (load-module-data "perform")))
     (when data
       (setf (perform-commands mod) (getf data :commands))))
-  (format t "[CLoak] Module loaded: perform (~d commands)~%"
+  (cloak-log "[CLoak] Module loaded: perform (~d commands)~%"
           (length (perform-commands mod))))
 
 (defmethod on-upstream-connect ((mod perform-module) bouncer upstream)
@@ -139,7 +139,7 @@
     (dolist (cmd (perform-commands mod))
       (when (and cmd (plusp (length cmd)))
         (cloak.upstream:upstream-send upstream cmd)))
-    (format t "[CLoak] Perform: sent ~d commands to ~a~%"
+    (cloak-log "[CLoak] Perform: sent ~d commands to ~a~%"
             (length (perform-commands mod))
             (cloak.upstream:upstream-network-name upstream))))
 
@@ -176,7 +176,7 @@ PRIVMSG NickServ :GHOST myname mypass"
   (:documentation "Periodically attempts to reclaim the configured nick if it was taken."))
 
 (defmethod on-load ((mod keepnick-module) bouncer)
-  (format t "[CLoak] Module loaded: keepnick~%")
+  (cloak-log "[CLoak] Module loaded: keepnick~%")
   ;; Start a timer that checks all upstreams
   (start-module-timer mod "keepnick" (keepnick-interval mod)
     (lambda ()
@@ -242,7 +242,7 @@ PRIVMSG NickServ :GHOST myname mypass"
        (when (cloak.upstream:upstream-connected-p upstream)
          (cloak.upstream:upstream-send upstream
            (cloak.protocol:irc-join channel))
-         (format t "[CLoak] StickyChan: rejoined ~a on ~a~%"
+         (cloak-log "[CLoak] StickyChan: rejoined ~a on ~a~%"
                  channel (cloak.upstream:upstream-network-name upstream))))
      :name (format nil "stickychan-rejoin-~a" channel))))
 
@@ -318,7 +318,7 @@ PRIVMSG NickServ :GHOST myname mypass"
   (:documentation "Periodically saves message buffers to disk and restores them on startup."))
 
 (defmethod on-load ((mod savebuff-module) bouncer)
-  (format t "[CLoak] Module loaded: savebuff~%")
+  (cloak-log "[CLoak] Module loaded: savebuff~%")
   ;; Restore saved buffers
   (let ((data (load-module-data "savebuff")))
     (when data
@@ -336,7 +336,7 @@ PRIVMSG NickServ :GHOST myname mypass"
                          (cloak.buffer:buffer-push buffer raw msgid)
                          (incf count))))))
         (when (plusp count)
-          (format t "[CLoak] Savebuff: restored ~d messages across ~d buffers~%"
+          (cloak-log "[CLoak] Savebuff: restored ~d messages across ~d buffers~%"
                   count (length data))))))
   ;; Start periodic save timer
   (start-module-timer mod "save" (savebuff-interval mod)
@@ -430,7 +430,7 @@ preventing old messages from being replayed after the user has already read them
   (let ((data (load-module-data "log")))
     (when data
       (setf (log-log-joins mod) (getf data :log-joins))))
-  (format t "[CLoak] Module loaded: log (dir: ~a)~%"
+  (cloak-log "[CLoak] Module loaded: log (dir: ~a)~%"
           (namestring (log-log-dir mod))))
 
 (defun log--write-entry (mod network target line)
@@ -453,7 +453,7 @@ preventing old messages from being replayed after the user has already read them
               (decode-universal-time (get-universal-time))
             (format out "[~2,'0d:~2,'0d:~2,'0d] ~a~%" hour min sec line)))
       (error (e)
-        (format t "[CLoak] Log write error: ~a~%" e)))))
+        (cloak-log "[CLoak] Log write error: ~a~%" e)))))
 
 (defmethod on-upstream-message ((mod log-module) bouncer upstream raw-line msg)
   (declare (ignore bouncer raw-line))
@@ -661,14 +661,14 @@ attaches to or detaches from the same network."))
           (maphash (lambda (ip until)
                      (when (> now until)
                        (remhash ip (f2b-bans mod))
-                       (format t "[CLoak] Fail2ban: unbanned ~a~%" ip)))
+                       (cloak-log "[CLoak] Fail2ban: unbanned ~a~%" ip)))
                    (f2b-bans mod))
           ;; Remove old attempt records
           (maphash (lambda (ip record)
                      (when (> now (+ (cdr record) (f2b-attempt-window mod)))
                        (remhash ip (f2b-attempts mod))))
                    (f2b-attempts mod))))))
-  (format t "[CLoak] Module loaded: fail2ban (max ~d attempts, ~ds ban)~%"
+  (cloak-log "[CLoak] Module loaded: fail2ban (max ~d attempts, ~ds ban)~%"
           (f2b-max-attempts mod) (f2b-ban-duration mod)))
 
 (defmethod on-new-connection ((mod fail2ban-module) bouncer client-ip)
@@ -676,7 +676,7 @@ attaches to or detaches from the same network."))
   (bt:with-lock-held ((f2b-lock mod))
     (let ((ban-until (gethash client-ip (f2b-bans mod))))
       (when (and ban-until (> ban-until (get-universal-time)))
-        (format t "[CLoak] Fail2ban: rejected banned IP ~a~%" client-ip)
+        (cloak-log "[CLoak] Fail2ban: rejected banned IP ~a~%" client-ip)
         (return-from on-new-connection :drop))))
   nil)
 
@@ -695,7 +695,7 @@ attaches to or detaches from the same network."))
                 (setf (gethash client-ip (f2b-bans mod))
                       (+ now (f2b-ban-duration mod)))
                 (remhash client-ip (f2b-attempts mod))
-                (format t "[CLoak] Fail2ban: banned ~a for ~d seconds (~d failed attempts)~%"
+                (cloak-log "[CLoak] Fail2ban: banned ~a for ~d seconds (~d failed attempts)~%"
                         client-ip (f2b-ban-duration mod) new-count)))
             ;; New window
             (setf (gethash client-ip (f2b-attempts mod))
@@ -953,7 +953,7 @@ Uses IRC QUIT/JOIN/NICK events to track presence."))
   (let ((data (load-module-data "watch")))
     (when data
       (setf (watch-list mod) (getf data :nicks))))
-  (format t "[CLoak] Module loaded: watch (~d nicks)~%"
+  (cloak-log "[CLoak] Module loaded: watch (~d nicks)~%"
           (length (watch-list mod))))
 
 (defun watch--notify-clients (bouncer upstream text)
@@ -1089,7 +1089,7 @@ a threshold, protecting clients from flood-related disconnects."))
                       (remhash target (flood-counters mod))
                       (cloak.upstream:upstream-send upstream
                         (format nil "PART ~a :Flood protection triggered" target))
-                      (format t "[CLoak] Flooddetach: parted ~a on ~a (~d msgs in ~ds)~%"
+                      (cloak-log "[CLoak] Flooddetach: parted ~a on ~a (~d msgs in ~ds)~%"
                               target (cloak.upstream:upstream-network-name upstream)
                               new-count (flood-window mod))
                       ;; Notify attached clients
@@ -1163,7 +1163,7 @@ user/network/ident (ident = IRC USER username)."))
     (when data
       (loop for (key time) on data by #'cddr
             do (setf (gethash (string key) (cb-positions mod)) time))))
-  (format t "[CLoak] Module loaded: clientbuffer (~d positions tracked)~%"
+  (cloak-log "[CLoak] Module loaded: clientbuffer (~d positions tracked)~%"
           (hash-table-count (cb-positions mod))))
 
 (defun cb--save-positions (mod)
@@ -1189,7 +1189,7 @@ user/network/ident (ident = IRC USER username)."))
                         (gethash key (cb-positions mod)))))
     (when stored-time
       (setf (cloak.downstream:client-last-playback client) stored-time)
-      (format t "[CLoak] Clientbuffer: restored position for ~a (last seen ~ds ago)~%"
+      (cloak-log "[CLoak] Clientbuffer: restored position for ~a (last seen ~ds ago)~%"
               key (- (get-universal-time) stored-time)))))
 
 (defmethod on-client-detach ((mod clientbuffer-module) bouncer client)
