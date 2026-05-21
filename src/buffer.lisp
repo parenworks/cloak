@@ -14,9 +14,9 @@
 ;;; --- Message Buffer (ring buffer) ---
 
 (defclass message-buffer ()
-  ((messages :initform (make-array 500 :initial-element nil)
+  ((messages :initform (make-array 5000 :initial-element nil)
              :accessor buffer-messages)
-   (capacity :initarg :capacity :initform 500
+   (capacity :initarg :capacity :initform 5000
              :accessor buffer-capacity)
    (head :initform 0 :accessor buffer-head)
    (count :initform 0 :accessor buffer-count)
@@ -24,7 +24,7 @@
          :accessor buffer-lock))
   (:documentation "Thread-safe ring buffer for IRC message storage."))
 
-(defun make-message-buffer (&key (capacity 500))
+(defun make-message-buffer (&key (capacity 5000))
   "Create a new message buffer with CAPACITY slots."
   (make-instance 'message-buffer
     :capacity capacity))

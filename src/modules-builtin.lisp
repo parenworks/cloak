@@ -327,7 +327,7 @@ PRIVMSG NickServ :GHOST myname mypass"
               do (let ((buffer (gethash key (cloak.bouncer:bouncer-buffers bouncer))))
                    (unless buffer
                      ;; Create buffer if it doesn't exist yet
-                     (setf buffer (cloak.buffer:make-message-buffer :capacity 500))
+                     (setf buffer (cloak.buffer:make-message-buffer))
                      (setf (gethash key (cloak.bouncer:bouncer-buffers bouncer)) buffer))
                    (dolist (entry messages)
                      (let ((raw (getf entry :raw))

@@ -25,7 +25,7 @@
    (log-level :initarg :log-level :accessor config-log-level
               :initform :info)
    (enabled-modules :initarg :enabled-modules :accessor config-enabled-modules
-                    :initform '("ctcp-version" "block-motd" "auto-away")
+                    :initform '("ctcp-version" "block-motd" "auto-away" "savebuff" "clientbuffer")
                     :documentation "List of module names to load on startup.")))
 
 (defclass user-config ()
@@ -58,7 +58,7 @@
    (autojoin :initarg :autojoin :accessor network-autojoin
              :initform nil)
    (buffer-size :initarg :buffer-size :accessor network-buffer-size
-                :initform 500)
+                :initform 5000)
    (block-motd :initarg :block-motd :accessor network-block-motd
                :initform nil
                :documentation "If T, suppress MOTD on client connect.")))
@@ -133,7 +133,7 @@
     :sasl (getf plist :sasl)
     :alt-nick (getf plist :alt-nick)
     :autojoin (getf plist :autojoin)
-    :buffer-size (or (getf plist :buffer-size) 500)
+    :buffer-size (or (getf plist :buffer-size) 5000)
     :block-motd (getf plist :block-motd)))
 
 (defun plist-to-user (plist)
@@ -156,7 +156,7 @@
     :web-port (or (getf plist :web-port) 8076)
     :log-level (or (getf plist :log-level) :info)
     :enabled-modules (or (getf plist :enabled-modules)
-                         '("ctcp-version" "block-motd" "auto-away"))
+                         '("ctcp-version" "block-motd" "auto-away" "savebuff" "clientbuffer"))
     :users (mapcar #'plist-to-user (getf plist :users))))
 
 ;;; --- File I/O ---
