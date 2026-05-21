@@ -201,17 +201,47 @@ Buffer it and relay to any attached clients."
       (client-send client
                    (format nil ":CLoak 001 ~a :Welcome to CLoak bouncer"
                            (upstream-nick upstream)))
-      ;; Replay channel state (JOINs only - NAMES sent on client request)
-      ;; NAMES data for 16 channels with 1000+ nicks each would overwhelm
-      ;; clients like Emacs. Clients that need NAMES send explicit requests,
-      ;; which we answer locally from tracked nick data.
-      (maphash (lambda (chan _v)
-                 (declare (ignore _v))
-                 (client-send client
-                              (format nil ":~a!~a@CLoak JOIN ~a"
-                                      (upstream-nick upstream)
-                                      user-name chan)))
-               (upstream-channels upstream))
+      ;; Replay channel state: JOIN + NAMES for each channel (as a real server does)
+      ;; Stagger delivery to avoid overwhelming clients like Emacs
+      (let ((channels nil))
+        (maphash (lambda (chan _v)
+                   (declare (ignore _v))
+                   (push chan channels))
+                 (upstream-channels upstream))
+        (dolist (chan channels)
+          ;; Send JOIN
+          (client-send client
+                       (format nil ":~a!~a@CLoak JOIN ~a"
+                               (upstream-nick upstream)
+                               user-name chan))
+          ;; Send NAMES (353) for this channel
+          (let ((nicks-ht (gethash chan (upstream-channel-nicks upstream))))
+            (when nicks-ht
+              (let ((nick-list nil))
+                (maphash (lambda (nick prefix)
+                           (push (format nil "~a~a" prefix nick) nick-list))
+                         nicks-ht)
+                ;; Send in chunks to stay under IRC line limit
+                (let ((chunk nil) (chunk-len 0))
+                  (dolist (entry nick-list)
+                    (let ((entry-len (+ (length entry) 1)))
+                      (when (> (+ chunk-len entry-len) 400)
+                        (client-send client
+                                     (format nil ":CLoak 353 ~a = ~a :~{~a~^ ~}"
+                                             (upstream-nick upstream) chan (nreverse chunk)))
+                        (setf chunk nil chunk-len 0))
+                      (push entry chunk)
+                      (incf chunk-len entry-len)))
+                  (when chunk
+                    (client-send client
+                                 (format nil ":CLoak 353 ~a = ~a :~{~a~^ ~}"
+                                         (upstream-nick upstream) chan (nreverse chunk))))))))
+          ;; End of NAMES
+          (client-send client
+                       (format nil ":CLoak 366 ~a ~a :End of /NAMES list"
+                               (upstream-nick upstream) chan))
+          ;; Small delay between channels
+          (sleep 0.02)))
       ;; Clear AWAY now that a client is attached
       (bouncer--set-away bouncer client network-name nil)
       ;; Fire attach hooks BEFORE playback so modules (e.g. clientbuffer)
@@ -316,19 +346,36 @@ Buffer it and relay to any attached clients."
          (client-send client
                       (format nil ":CLoak 366 ~a ~a :End of /NAMES list"
                               (upstream-nick upstream) chan))))
-      ;; WHO - respond locally from tracked nick data (never forward to avoid flooding)
+      ;; WHO/WHOX - respond locally from tracked nick data (never forward to avoid flooding)
       ((and (string= command "WHO") upstream)
-       (let* ((mask (or (first (cloak.protocol:irc-message-params msg)) "*"))
+       (let* ((params (cloak.protocol:irc-message-params msg))
+              (mask (or (first params) "*"))
+              (flags (second params))
+              (whox-p (and flags (plusp (length flags))
+                           (char= (char flags 0) #\%)))
+              ;; Extract WHOX token if present (after comma in flags)
+              (token (when whox-p
+                       (let ((comma (position #\, flags)))
+                         (when comma (subseq flags (1+ comma))))))
               (nicks-ht (gethash mask (upstream-channel-nicks upstream))))
-         ;; Generate synthetic 352 replies from our nick cache
          (when nicks-ht
-           (maphash (lambda (nick prefix)
-                      (declare (ignore prefix))
-                      (client-send client
-                                   (format nil ":CLoak 352 ~a ~a ~a CLoak CLoak ~a H :0 ~a"
-                                           (upstream-nick upstream) mask
-                                           nick nick nick)))
-                    nicks-ht))
+           (if whox-p
+               ;; WHOX: send 354 replies with token and account field
+               (maphash (lambda (nick prefix)
+                          (declare (ignore prefix))
+                          (client-send client
+                                       (format nil ":CLoak 354 ~a ~@[~a ~]~a ~a CLoak CLoak ~a H :0 ~a"
+                                               (upstream-nick upstream)
+                                               token mask nick nick nick)))
+                        nicks-ht)
+               ;; Standard WHO: send 352 replies
+               (maphash (lambda (nick prefix)
+                          (declare (ignore prefix))
+                          (client-send client
+                                       (format nil ":CLoak 352 ~a ~a ~a CLoak CLoak ~a H :0 ~a"
+                                               (upstream-nick upstream) mask
+                                               nick nick nick)))
+                        nicks-ht)))
          (client-send client
                       (format nil ":CLoak 315 ~a ~a :End of /WHO list"
                               (upstream-nick upstream) mask))))
