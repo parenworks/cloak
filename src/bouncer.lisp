@@ -84,16 +84,25 @@ Connections are made in a background thread so startup isn't blocked."
 
 (defun bouncer--server-noise-p (command msg)
   "Return T if MSG is server connection noise that should not be buffered.
-  This includes server NOTICEs (no ! in source) and NickServ/ChanServ NOTICEs."
+  Suppresses NickServ/ChanServ notices and harmless server NOTICEs (ident, looking up host).
+  Important server NOTICEs (flood warnings, kill notices) are passed through."
   (when (string= command "NOTICE")
-    (let ((source (cloak.protocol:irc-message-source msg)))
+    (let ((source (cloak.protocol:irc-message-source msg))
+          (text (second (cloak.protocol:irc-message-params msg))))
       (or
-       ;; Server NOTICE (source has no ! = it's a server, not a user)
-       (and source (not (position #\! source)))
-       ;; NickServ / ChanServ notices
+       ;; NickServ / ChanServ notices (SASL handles auth)
        (and source
             (member (cloak.protocol:source-nick source)
-                    '("NickServ" "ChanServ") :test #'string-equal))))))
+                    '("NickServ" "ChanServ") :test #'string-equal))
+       ;; Server NOTICE (source has no ! = it's a server, not a user)
+       ;; But only suppress routine connection noise, not warnings
+       (and source (not (position #\! source))
+            text
+            (or (search "Looking up your hostname" text)
+                (search "Checking Ident" text)
+                (search "Found your hostname" text)
+                (search "No Ident response" text)
+                (search "*** You are connected" text)))))))
 
 ;;; --- Message Relay ---
 
