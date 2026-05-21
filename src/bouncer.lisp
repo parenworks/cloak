@@ -275,9 +275,8 @@ Buffer it and relay to any attached clients."
               (nicks-ht (gethash chan (upstream-channel-nicks upstream)))
               (nick-list nil))
          (when nicks-ht
-           (maphash (lambda (nick _v)
-                      (declare (ignore _v))
-                      (push nick nick-list))
+           (maphash (lambda (nick prefix)
+                      (push (format nil "~a~a" prefix nick) nick-list))
                     nicks-ht))
          ;; Send RPL_NAMREPLY (353) in chunks of ~400 chars to stay under line limit
          ;; Throttle between chunks so clients like Emacs can process
@@ -285,9 +284,9 @@ Buffer it and relay to any attached clients."
            (let ((chunk nil)
                  (chunk-len 0)
                  (chunks-sent 0))
-             (dolist (nick nick-list)
-               (let ((nick-len (+ (length nick) 1))) ; +1 for space
-                 (when (> (+ chunk-len nick-len) 400)
+             (dolist (entry nick-list)
+               (let ((entry-len (+ (length entry) 1))) ; +1 for space
+                 (when (> (+ chunk-len entry-len) 400)
                    ;; Flush current chunk
                    (client-send client
                                 (format nil ":CLoak 353 ~a = ~a :~{~a~^ ~}"
@@ -297,8 +296,8 @@ Buffer it and relay to any attached clients."
                    (when (zerop (mod chunks-sent 3))
                      (sleep 0.02))
                    (setf chunk nil chunk-len 0))
-                 (push nick chunk)
-                 (incf chunk-len nick-len)))
+                 (push entry chunk)
+                 (incf chunk-len entry-len)))
              ;; Flush remaining
              (when chunk
                (client-send client
@@ -308,10 +307,19 @@ Buffer it and relay to any attached clients."
          (client-send client
                       (format nil ":CLoak 366 ~a ~a :End of /NAMES list"
                               (upstream-nick upstream) chan))))
-      ;; WHO - respond locally with end-of-who
+      ;; WHO - respond locally from tracked nick data (never forward to avoid flooding)
       ((and (string= command "WHO") upstream)
-       ;; Don't forward to upstream - would flood with 16 channels.
-       (let ((mask (or (first (cloak.protocol:irc-message-params msg)) "*")))
+       (let* ((mask (or (first (cloak.protocol:irc-message-params msg)) "*"))
+              (nicks-ht (gethash mask (upstream-channel-nicks upstream))))
+         ;; Generate synthetic 352 replies from our nick cache
+         (when nicks-ht
+           (maphash (lambda (nick prefix)
+                      (declare (ignore prefix))
+                      (client-send client
+                                   (format nil ":CLoak 352 ~a ~a ~a CLoak CLoak ~a H :0 ~a"
+                                           (upstream-nick upstream) mask
+                                           nick nick nick)))
+                    nicks-ht))
          (client-send client
                       (format nil ":CLoak 315 ~a ~a :End of /WHO list"
                               (upstream-nick upstream) mask))))

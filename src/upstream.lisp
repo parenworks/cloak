@@ -413,9 +413,10 @@ If JITTER is T, adds random jitter between base and 1.5x base."
          ;; Update in all channel nick lists
          (maphash (lambda (chan nicks)
                     (declare (ignore chan))
-                    (when (gethash old-nick nicks)
-                      (remhash old-nick nicks)
-                      (setf (gethash new-nick nicks) t)))
+                    (let ((prefix (gethash old-nick nicks)))
+                      (when prefix
+                        (remhash old-nick nicks)
+                        (setf (gethash new-nick nicks) prefix))))
                   (upstream-channel-nicks upstream))
          ;; Track our own nick
          (when (string-equal old-nick (upstream-nick upstream))
@@ -432,10 +433,10 @@ If JITTER is T, adds random jitter between base and 1.5x base."
            ;; Initialize nick set for this channel
            (setf (gethash chan (upstream-channel-nicks upstream))
                  (make-hash-table :test 'equal)))
-         ;; Add the nick to the channel's nick set
+         ;; Add the nick to the channel's nick set (no prefix for JOINs)
          (let ((nicks (gethash chan (upstream-channel-nicks upstream))))
            (when nicks
-             (setf (gethash nick nicks) t)))))
+             (setf (gethash nick nicks) "")))))
       ;; PART - remove nick from channel
       ((string= command "PART")
        (let ((chan (first (irc-message-params msg)))
@@ -462,6 +463,34 @@ If JITTER is T, adds random jitter between base and 1.5x base."
              (let ((nicks (gethash chan (upstream-channel-nicks upstream))))
                (when nicks
                  (remhash kicked nicks))))))
+      ;; MODE - track prefix changes (op/voice/etc.)
+      ((string= command "MODE")
+       (let* ((chan (first (irc-message-params msg)))
+              (mode-str (second (irc-message-params msg)))
+              (mode-args (cddr (irc-message-params msg)))
+              (nicks (gethash chan (upstream-channel-nicks upstream))))
+         (when (and nicks mode-str (plusp (length mode-str)))
+           ;; Map mode letters to NAMES prefixes
+           (let ((adding (char= (char mode-str 0) #\+))
+                 (arg-idx 0))
+             (loop for ch across mode-str
+                   do (cond
+                        ((char= ch #\+) (setf adding t))
+                        ((char= ch #\-) (setf adding nil))
+                        ;; Modes that take a nick argument and map to prefixes
+                        ((member ch '(#\o #\v #\h #\a #\q))
+                         (when (< arg-idx (length mode-args))
+                           (let ((nick (nth arg-idx mode-args))
+                                 (prefix (case ch
+                                           (#\o "@") (#\v "+") (#\h "%")
+                                           (#\a "&") (#\q "~"))))
+                             (when (gethash nick nicks)
+                               (setf (gethash nick nicks)
+                                     (if adding prefix ""))))
+                           (incf arg-idx)))
+                        ;; Other modes with args (b, e, I, k, etc.) - skip arg
+                        ((member ch '(#\b #\e #\I #\k #\l #\f #\j))
+                         (incf arg-idx))))))))
       ;; 353 (RPL_NAMREPLY) - bulk populate nick list
       ((string= command "353")
        ;; Params: <nick> <chan-type> <channel> :<nick1> <nick2> ...
@@ -471,8 +500,13 @@ If JITTER is T, adds random jitter between base and 1.5x base."
          (when (and nicks names-str)
            (dolist (entry (split-sequence:split-sequence #\Space names-str
                                                          :remove-empty-subseqs t))
-             ;; Strip mode prefixes (@+%~&)
-             (let ((nick (string-left-trim "@+%~&" entry)))
+             ;; Extract mode prefix and bare nick
+             (let* ((prefix-chars "@+%~&")
+                    (prefix (if (and (plusp (length entry))
+                                     (find (char entry 0) prefix-chars))
+                                (string (char entry 0))
+                                ""))
+                    (nick (string-left-trim prefix-chars entry)))
                (when (plusp (length nick))
-                 (setf (gethash nick nicks) t))))))))))
+                 (setf (gethash nick nicks) prefix))))))))))
 
