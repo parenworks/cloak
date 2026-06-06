@@ -197,10 +197,40 @@ Buffer it and relay to any attached clients."
   ;; Send welcome and state
   (let ((upstream (bouncer--get-upstream bouncer user-name network-name)))
     (when upstream
-      ;; Send 001 welcome
-      (client-send client
-                   (format nil ":CLoak 001 ~a :Welcome to CLoak bouncer"
-                           (upstream-nick upstream)))
+      ;; Send full registration burst so strict clients (e.g. Revolution IRC)
+      ;; consider registration complete. Many clients wait for 004 + end-of-MOTD.
+      (let ((nick (upstream-nick upstream))
+            (srv (or (cloak.upstream:upstream-server-name upstream) "CLoak")))
+        (client-send client
+                     (format nil ":CLoak 001 ~a :Welcome to CLoak bouncer ~a" nick nick))
+        (client-send client
+                     (format nil ":CLoak 002 ~a :Your host is CLoak, running via ~a" nick srv))
+        (client-send client
+                     (format nil ":CLoak 003 ~a :This server was created by CLoak" nick))
+        (client-send client
+                     (format nil ":CLoak 004 ~a CLoak cloak-1.0 iow ov" nick))
+        ;; Relay captured ISUPPORT (005) tokens so the client parses
+        ;; PREFIX/CHANTYPES/etc. correctly. Chunk into groups of ~13 tokens.
+        (let ((tokens (cloak.upstream:upstream-isupport upstream)))
+          (loop while tokens
+                do (let ((chunk (subseq tokens 0 (min 13 (length tokens)))))
+                     (setf tokens (nthcdr 13 tokens))
+                     (client-send client
+                                  (format nil ":CLoak 005 ~a ~{~a~^ ~} :are supported by this server"
+                                          nick chunk)))))
+        ;; Replay MOTD (375/372/376) or send 422 if none
+        (let ((motd (cloak.upstream:upstream-motd upstream)))
+          (if motd
+              (progn
+                (client-send client
+                             (format nil ":CLoak 375 ~a :- Message of the day -" nick))
+                (dolist (line motd)
+                  (client-send client
+                               (format nil ":CLoak 372 ~a :~a" nick line)))
+                (client-send client
+                             (format nil ":CLoak 376 ~a :End of /MOTD command" nick)))
+              (client-send client
+                           (format nil ":CLoak 422 ~a :MOTD File is missing" nick)))))
       ;; Replay channel state: JOIN + NAMES for each channel (as a real server does)
       ;; Stagger delivery to avoid overwhelming clients like Emacs
       (let ((channels nil))
@@ -397,11 +427,20 @@ Buffer it and relay to any attached clients."
          ;; Buffer our own outgoing message (server won't echo it back)
          (let* ((target (first (cloak.protocol:irc-message-params msg)))
                 (nick (upstream-nick upstream))
-                (buffered-line (format nil ":~a!~a@CLoak ~a ~a :~a"
-                                       nick user-name command target
-                                       (second (cloak.protocol:irc-message-params msg))))
+                (mirror-line (format nil ":~a!~a@CLoak ~a ~a :~a"
+                                     nick user-name command target
+                                     (second (cloak.protocol:irc-message-params msg))))
                 (buffer (bouncer--get-buffer bouncer user-name network target)))
-           (buffer-push buffer buffered-line)))
+           (buffer-push buffer mirror-line)
+           ;; Mirror to all OTHER attached clients in real-time so every
+           ;; device sees messages sent from any client (true multi-client).
+           (bt:with-lock-held ((bouncer-lock bouncer))
+             (dolist (other (bouncer-clients bouncer))
+               (when (and (not (eq other client))
+                          (client-authenticated-p other)
+                          (string-equal (client-user other) user-name)
+                          (string-equal (client-network other) network))
+                 (client-send other mirror-line))))))
        (upstream-send upstream line)))))
 
 ;;; --- Away Management ---

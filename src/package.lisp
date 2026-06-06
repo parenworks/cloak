@@ -131,6 +131,9 @@
    #:upstream-channels
    #:upstream-channel-nicks
    #:upstream-cap-enabled
+   #:upstream-server-name
+   #:upstream-isupport
+   #:upstream-motd
    #:upstream-config
    #:upstream-reconnect-p
    #:upstream-reconnect-attempts

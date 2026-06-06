@@ -23,6 +23,10 @@
    (cap-state :initform nil :accessor upstream-cap-state
               :documentation ":ls-received, :req-sent, :sasl-auth, :done")
    (server-name :initform nil :accessor upstream-server-name)
+   (isupport :initform nil :accessor upstream-isupport
+             :documentation "List of raw RPL_ISUPPORT (005) token strings from the server.")
+   (motd :initform nil :accessor upstream-motd
+         :documentation "List of MOTD lines (372) captured from the server.")
    ;; Health
    (last-activity :initform (get-universal-time) :accessor upstream-last-activity)
    (ping-pending :initform nil :accessor upstream-ping-pending)
@@ -380,6 +384,23 @@ If JITTER is T, adds random jitter between base and 1.5x base."
                 (upstream-send upstream (irc-join chan))
                 (sleep 1)))
             :name "cloak-autojoin"))))
+      ;; 005 (RPL_ISUPPORT) - capture server capabilities for client replay
+      ((string= command "005")
+       ;; Params: <nick> <token1> <token2> ... :are supported by this server
+       ;; Store the middle tokens (drop the trailing human-readable text)
+       (let ((tokens (butlast (rest (irc-message-params msg)))))
+         (when tokens
+           (setf (upstream-isupport upstream)
+                 (append (upstream-isupport upstream) tokens)))))
+      ;; 372 (RPL_MOTD) - capture MOTD lines for client replay
+      ((string= command "372")
+       (let ((text (second (irc-message-params msg))))
+         (when text
+           (setf (upstream-motd upstream)
+                 (append (upstream-motd upstream) (list text))))))
+      ;; 375 (RPL_MOTDSTART) - reset MOTD buffer
+      ((string= command "375")
+       (setf (upstream-motd upstream) nil))
       ;; Nick in use
       ((string= command "433")
        (let* ((config (upstream-config upstream))
