@@ -421,20 +421,36 @@ Finds the upstream using any user who owns that network."
 
 ;;; --- Playback ---
 
+(defvar *playback-limit* 100
+  "Maximum number of messages replayed per channel on attach.
+Full history remains available via /msg *playback. Caps the initial
+flood so single-threaded clients (e.g. Emacs) don't freeze on connect.")
+
 (defun playback-buffer (bouncer client user-name network-name)
-  "Send buffered messages to CLIENT since their last playback."
+  "Send buffered messages to CLIENT since their last playback.
+Capped at *playback-limit* messages per channel to avoid overwhelming clients."
   (let ((since (client-last-playback client))
         (prefix (format nil "~a/~a/" user-name network-name))
         (total 0))
     ;; Replay all buffers for this network, throttled to avoid overwhelming clients
     (maphash (lambda (key buffer)
                (when (alex:starts-with-subseq prefix key)
-                 (let ((msgs (buffer-messages-since buffer since)))
-                   (dolist (msg msgs)
+                 (let* ((msgs (buffer-messages-since buffer since))
+                        ;; Keep only the most recent *playback-limit* messages
+                        (len (length msgs))
+                        (capped (if (> len *playback-limit*)
+                                    (nthcdr (- len *playback-limit*) msgs)
+                                    msgs))
+                        (sent 0))
+                   (dolist (msg capped)
                      (incf total)
-                     (client-send client (stored-message-raw msg)))
+                     (incf sent)
+                     (client-send client (stored-message-raw msg))
+                     ;; Yield every 20 messages so the client can process
+                     (when (zerop (mod sent 20))
+                       (sleep 0.02)))
                    ;; Small delay between buffers to let client process
-                   (when msgs (sleep 0.05)))))
+                   (when capped (sleep 0.05)))))
              (bouncer-buffers bouncer))
     (when (plusp total)
       (cloak-log "[CLoak] Played back ~d messages for ~a~%" total user-name))
