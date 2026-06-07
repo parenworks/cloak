@@ -31,10 +31,14 @@
 
 ;;; --- Buffer Operations ---
 
-(defun buffer-push (buffer raw-line &optional msgid)
-  "Push RAW-LINE into BUFFER. Oldest message dropped when full."
+(defun buffer-push (buffer raw-line &optional msgid time)
+  "Push RAW-LINE into BUFFER. Oldest message dropped when full.
+TIME, if supplied, sets the stored message timestamp (used when restoring
+persisted buffers so playback ordering is preserved across restarts)."
   (bt:with-lock-held ((buffer-lock buffer))
-    (let ((msg (make-stored-message :raw raw-line :msgid msgid))
+    (let ((msg (if time
+                   (make-stored-message :raw raw-line :msgid msgid :time time)
+                   (make-stored-message :raw raw-line :msgid msgid)))
           (idx (mod (+ (buffer-head buffer) (buffer-count buffer))
                     (buffer-capacity buffer))))
       (setf (aref (buffer-messages buffer) idx) msg)

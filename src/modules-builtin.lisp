@@ -331,9 +331,12 @@ PRIVMSG NickServ :GHOST myname mypass"
                      (setf (gethash key (cloak.bouncer:bouncer-buffers bouncer)) buffer))
                    (dolist (entry messages)
                      (let ((raw (getf entry :raw))
-                           (msgid (getf entry :msgid)))
+                           (msgid (getf entry :msgid))
+                           (time (getf entry :time)))
                        (when raw
-                         (cloak.buffer:buffer-push buffer raw msgid)
+                         ;; Preserve original timestamp so playback ordering
+                         ;; survives restarts (falls back to now if missing).
+                         (cloak.buffer:buffer-push buffer raw msgid time)
                          (incf count))))))
         (when (plusp count)
           (cloak-log "[CLoak] Savebuff: restored ~d messages across ~d buffers~%"

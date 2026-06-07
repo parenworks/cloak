@@ -752,6 +752,25 @@
                 (:span :style "font-size: 0.75rem; color: var(--subtext0); align-self: center;"
                   "Requires restart to take effect")))))
 
+        ;; Playback
+        (:div :class "card mt-2"
+          (:div :class "card-header"
+            (:span :class "card-title" "Playback"))
+          (:form :data-on-submit "/action/config-page/save-playback"
+            (:div :class "form-grid"
+              (:div :class "form-group"
+                (:label :class "form-label" "Backlog Lines (per channel)")
+                (:input :class "form-input" :type "number" :name "playback-lines"
+                        :min "0" :max "5000"
+                        :value (format nil "~d" (if cfg (config:config-playback-lines cfg) 100)))))
+            (:div :style "padding: 0 1rem 1rem;"
+              (:div :class "flex gap-1"
+                (:button :type "submit" :class "btn btn-primary"
+                         :data-disable-during-request t
+                         "Save Playback Settings")
+                (:span :style "font-size: 0.75rem; color: var(--subtext0); align-self: center;"
+                  "Most recent N messages replayed on each client connect (applies immediately)")))))
+
         ;; Raw Config
         (:div :class "card mt-2"
           (:div :class "card-header"

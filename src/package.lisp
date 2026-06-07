@@ -18,6 +18,7 @@
    #:config-users
    #:config-log-level
    #:config-enabled-modules
+   #:config-playback-lines
    ;; User config
    #:user-config
    #:user-name

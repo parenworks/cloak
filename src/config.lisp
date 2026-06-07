@@ -26,7 +26,10 @@
               :initform :info)
    (enabled-modules :initarg :enabled-modules :accessor config-enabled-modules
                     :initform '("ctcp-version" "block-motd" "auto-away" "savebuff" "clientbuffer")
-                    :documentation "List of module names to load on startup.")))
+                    :documentation "List of module names to load on startup.")
+   (playback-lines :initarg :playback-lines :accessor config-playback-lines
+                   :initform 100
+                   :documentation "Max messages replayed per channel as backlog on client attach.")))
 
 (defclass user-config ()
   ((name :initarg :name :accessor user-name)
@@ -115,6 +118,7 @@
         :web-port (config-web-port cfg)
         :log-level (config-log-level cfg)
         :enabled-modules (config-enabled-modules cfg)
+        :playback-lines (config-playback-lines cfg)
         :users (mapcar #'config-to-plist (config-users cfg))))
 
 ;;; --- Deserialization ---
@@ -157,6 +161,7 @@
     :log-level (or (getf plist :log-level) :info)
     :enabled-modules (or (getf plist :enabled-modules)
                          '("ctcp-version" "block-motd" "auto-away" "savebuff" "clientbuffer"))
+    :playback-lines (or (getf plist :playback-lines) 100)
     :users (mapcar #'plist-to-user (getf plist :users))))
 
 ;;; --- File I/O ---

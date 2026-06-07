@@ -2,7 +2,7 @@
 
 (defsystem "cloak"
   :name "cloak"
-  :version "0.2.2"
+  :version "0.3.0"
   :author "Glenn Thompson"
   :license "MIT"
   :description "An IRC bouncer written in Common Lisp with a Fluxion web interface"

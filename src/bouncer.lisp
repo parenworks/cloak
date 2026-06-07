@@ -461,24 +461,31 @@ Finds the upstream using any user who owns that network."
 ;;; --- Playback ---
 
 (defvar *playback-limit* 100
-  "Maximum number of messages replayed per channel on attach.
-Full history remains available via /msg *playback. Caps the initial
-flood so single-threaded clients (e.g. Emacs) don't freeze on connect.")
+  "Fallback maximum messages replayed per channel on attach when no
+config is available. The live value comes from config-playback-lines.")
+
+(defun bouncer--playback-limit (bouncer)
+  "Resolve the per-channel playback line limit from config (live), with fallback."
+  (let ((cfg (bouncer-config bouncer)))
+    (or (and cfg (cloak.config:config-playback-lines cfg))
+        *playback-limit*)))
 
 (defun playback-buffer (bouncer client user-name network-name)
-  "Send buffered messages to CLIENT since their last playback.
-Capped at *playback-limit* messages per channel to avoid overwhelming clients."
-  (let ((since (client-last-playback client))
-        (prefix (format nil "~a/~a/" user-name network-name))
+  "Replay the most recent backlog to CLIENT on attach.
+Always sends the last N messages per channel (N = config-playback-lines)
+so every reconnect shows recent context, like a traditional bouncer.
+Throttled to avoid overwhelming single-threaded clients (e.g. Emacs)."
+  (let ((prefix (format nil "~a/~a/" user-name network-name))
+        (limit (bouncer--playback-limit bouncer))
         (total 0))
     ;; Replay all buffers for this network, throttled to avoid overwhelming clients
     (maphash (lambda (key buffer)
                (when (alex:starts-with-subseq prefix key)
-                 (let* ((msgs (buffer-messages-since buffer since))
-                        ;; Keep only the most recent *playback-limit* messages
+                 (let* ((msgs (buffer-messages-all buffer))
+                        ;; Always keep only the most recent LIMIT messages
                         (len (length msgs))
-                        (capped (if (> len *playback-limit*)
-                                    (nthcdr (- len *playback-limit*) msgs)
+                        (capped (if (> len limit)
+                                    (nthcdr (- len limit) msgs)
                                     msgs))
                         (sent 0))
                    (dolist (msg capped)

@@ -248,6 +248,25 @@
             (setf (config-message c) (format nil "Save failed: ~a" e)))))))
   nil)
 
+(comp:defaction config-page :save-playback (c params)
+  c ; component already marked dirty by defaction
+  (let ((b (bouncer-instance)))
+    (when b
+      (let* ((cfg (bouncer:bouncer-config b))
+             (raw (cdr (assoc :playback-lines params)))
+             (n (and raw (parse-integer raw :junk-allowed t))))
+        (when (and n (>= n 0))
+          (setf (config:config-playback-lines cfg) n))
+        (handler-case
+            (progn
+              (config:save-config cfg)
+              (setf (config-message c)
+                    (format nil "Playback set to ~d lines per channel. Applies on next attach."
+                            (config:config-playback-lines cfg))))
+          (error (e)
+            (setf (config-message c) (format nil "Save failed: ~a" e)))))))
+  nil)
+
 (comp:defaction change-password-form :change (c params)
   (let* ((new-pw (cdr (assoc :new-password params)))
          (confirm (cdr (assoc :confirm-password params)))
