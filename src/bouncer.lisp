@@ -194,7 +194,23 @@ Buffer it and relay to any attached clients."
   (setf (client-disconnect-handler client)
         (lambda (client)
           (detach-client bouncer client)))
-  ;; Send welcome and state
+  ;; Send welcome and state on a BACKGROUND THREAD so the client read loop
+  ;; can return to reading immediately. If we sent this burst synchronously on
+  ;; the read thread, the bouncer would not read from the client while writing
+  ;; the (potentially large) burst; a client that writes during that window
+  ;; (e.g. clatter's CHATHISTORY requests) could block on its socket send,
+  ;; freezing single-threaded Emacs until the user hits C-g.
+  (bt:make-thread
+   (lambda ()
+     (handler-case
+         (bouncer--send-attach-burst bouncer client user-name network-name)
+       (error (e)
+         (cloak-log "[CLoak] Attach burst error for ~a: ~a~%" user-name e))))
+   :name "cloak-attach-burst"))
+
+(defun bouncer--send-attach-burst (bouncer client user-name network-name)
+  "Send the registration burst, channel state, and backlog playback to CLIENT.
+Run on a dedicated thread so it does not block the client read loop."
   (let ((upstream (bouncer--get-upstream bouncer user-name network-name)))
     (when upstream
       ;; Send full registration burst so strict clients (e.g. Revolution IRC)
