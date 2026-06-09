@@ -149,7 +149,16 @@ ON-CONNECT is called with each new downstream-client."
 
 (defun listener--accept-loop (server-socket &key tls-cert tls-key on-connect)
   "Accept loop for incoming IRC client connections."
-  (handler-case
+  (let ((ssl-ctx (when tls-cert
+                   ;; Build a context with the FULL chain so clients receive the
+                   ;; intermediate cert(s). :certificate (SSL_use_certificate_file)
+                   ;; sends only the leaf, which breaks verification for clients
+                   ;; that don't already have the intermediate cached.
+                   (cl+ssl:make-context
+                    :certificate-chain-file tls-cert
+                    :private-key-file tls-key
+                    :verify-mode cl+ssl:+ssl-verify-none+))))
+   (handler-case
       (loop while server-socket
             for client-sock = (handler-case
                                   (iolib:accept-connection server-socket :wait t)
@@ -158,12 +167,11 @@ ON-CONNECT is called with each new downstream-client."
                                   nil))
             when client-sock
               do (handler-case
-                     (let* ((stream (if tls-cert
-                                       (cl+ssl:make-ssl-server-stream
-                                        (iolib:socket-os-fd client-sock)
-                                        :certificate tls-cert
-                                        :key tls-key
-                                        :external-format '(:utf-8 :eol-style :crlf))
+                     (let* ((stream (if ssl-ctx
+                                       (cl+ssl:with-global-context (ssl-ctx)
+                                         (cl+ssl:make-ssl-server-stream
+                                          (iolib:socket-os-fd client-sock)
+                                          :external-format '(:utf-8 :eol-style :crlf)))
                                        client-sock))
                             (client (make-instance 'downstream-client
                                       :socket client-sock
@@ -182,4 +190,4 @@ ON-CONNECT is called with each new downstream-client."
                      (cloak-log "[CLoak] Accept error: ~a~%" e)
                      (ignore-errors (close client-sock)))))
     (error (e)
-      (cloak-log "[CLoak] Listener error: ~a~%" e))))
+      (cloak-log "[CLoak] Listener error: ~a~%" e)))))
