@@ -2,7 +2,7 @@
 
 (in-package #:cloak)
 
-(defvar *version* "0.3.1")
+(defvar *version* "0.4.0")
 
 (defun version ()
   "Return CLoak version string."
