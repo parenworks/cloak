@@ -486,34 +486,106 @@ config is available. The live value comes from config-playback-lines.")
     (or (and cfg (cloak.config:config-playback-lines cfg))
         *playback-limit*)))
 
+(defvar *playback-batch-counter* 0
+  "Monotonic counter used to mint unique BATCH reference tags for playback.")
+
+(defun bouncer--server-time-tag (universal-time)
+  "Format UNIVERSAL-TIME as an IRCv3 server-time value (UTC, ISO-8601)."
+  (multiple-value-bind (sec min hr day mon yr)
+      (decode-universal-time universal-time 0)
+    (format nil "~4,'0d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0d.000Z"
+            yr mon day hr min sec)))
+
+(defun bouncer--augment-tags (raw-line extra-tags)
+  "Return RAW-LINE with EXTRA-TAGS (alist of (key . value)) prepended to its
+IRCv3 message tags, preserving the rest of the line verbatim. Keys already
+present on the line are left untouched."
+  (let* ((has-tags (and (plusp (length raw-line)) (char= (char raw-line 0) #\@)))
+         (space (and has-tags (position #\Space raw-line)))
+         (existing (if (and has-tags space) (subseq raw-line 1 space) ""))
+         (rest (if (and has-tags space) (subseq raw-line (1+ space)) raw-line))
+         (present (mapcar #'car (cloak.protocol:parse-tags existing)))
+         (new-parts (loop for (k . v) in extra-tags
+                          unless (member k present :test #'string-equal)
+                            collect (if v (format nil "~a=~a" k v) k)))
+         (all (append (when (plusp (length existing)) (list existing))
+                      new-parts)))
+    (if all
+        (format nil "@~{~a~^;~} ~a" all rest)
+        rest)))
+
+(defun bouncer--send-backlog-message (client msg server-time-p batch-ref)
+  "Send a single stored MSG to CLIENT, adding a server-time tag (when the
+client negotiated server-time) and a batch tag (when BATCH-REF is non-nil)."
+  (let ((tags (append
+               (when server-time-p
+                 (list (cons "time" (bouncer--server-time-tag
+                                     (stored-message-time msg)))))
+               (when batch-ref
+                 (list (cons "batch" batch-ref))))))
+    (client-send client
+                 (if tags
+                     (bouncer--augment-tags (stored-message-raw msg) tags)
+                     (stored-message-raw msg)))))
+
 (defun playback-buffer (bouncer client user-name network-name)
-  "Replay the most recent backlog to CLIENT on attach.
-Always sends the last N messages per channel (N = config-playback-lines)
-so every reconnect shows recent context, like a traditional bouncer.
+  "Replay backlog to CLIENT on attach.
+Caps each channel to the last N messages (N = config-playback-lines) for
+context. Messages the client already saw (timestamp <= its stored playback
+position) are sent inside a znc.in/playback BATCH so capable clients treat them
+as read history; messages newer than that position are sent normally so they
+surface as unread. server-time tags are added (for clients that negotiated the
+capability) so backlog renders at its original time instead of all-new.
 Throttled to avoid overwhelming single-threaded clients (e.g. Emacs)."
-  (let ((prefix (format nil "~a/~a/" user-name network-name))
-        (limit (bouncer--playback-limit bouncer))
-        (total 0))
+  (let* ((prefix (format nil "~a/~a/" user-name network-name))
+         (limit (bouncer--playback-limit bouncer))
+         (since (client-last-playback client))
+         (server-time-p (and (member "server-time" (client-caps client)
+                                     :test #'string-equal)
+                             t))
+         (batch-p (and (member "batch" (client-caps client) :test #'string-equal)
+                       t))
+         (total 0))
     ;; Replay all buffers for this network, throttled to avoid overwhelming clients
-    (maphash (lambda (key buffer)
-               (when (alex:starts-with-subseq prefix key)
-                 (let* ((msgs (buffer-messages-all buffer))
-                        ;; Always keep only the most recent LIMIT messages
-                        (len (length msgs))
-                        (capped (if (> len limit)
-                                    (nthcdr (- len limit) msgs)
-                                    msgs))
-                        (sent 0))
-                   (dolist (msg capped)
-                     (incf total)
-                     (incf sent)
-                     (client-send client (stored-message-raw msg))
-                     ;; Yield every 20 messages so the client can process
-                     (when (zerop (mod sent 20))
-                       (sleep 0.02)))
-                   ;; Small delay between buffers to let client process
-                   (when capped (sleep 0.05)))))
-             (bouncer-buffers bouncer))
+    (maphash
+     (lambda (key buffer)
+       (when (alex:starts-with-subseq prefix key)
+         (let* ((target (subseq key (length prefix)))
+                (msgs (buffer-messages-all buffer))
+                ;; Always keep only the most recent LIMIT messages
+                (len (length msgs))
+                (capped (if (> len limit) (nthcdr (- len limit) msgs) msgs))
+                (context nil)
+                (unread nil)
+                (sent 0))
+           ;; Split the capped window into already-seen context vs. unread.
+           (dolist (msg capped)
+             (if (and (plusp since) (> (stored-message-time msg) since))
+                 (push msg unread)
+                 (push msg context)))
+           (setf context (nreverse context)
+                 unread (nreverse unread))
+           ;; Send seen context, wrapped in a playback BATCH when supported.
+           (let ((ref (when (and batch-p context)
+                        (format nil "playback~d" (incf *playback-batch-counter*)))))
+             (when ref
+               (client-send client
+                            (format nil ":CLoak BATCH +~a znc.in/playback ~a"
+                                    ref target)))
+             (dolist (msg context)
+               (incf total) (incf sent)
+               (bouncer--send-backlog-message client msg server-time-p ref)
+               (when (zerop (mod sent 20)) (sleep 0.02)))
+             (when ref
+               (client-send client (format nil ":CLoak BATCH -~a" ref))))
+           ;; Send unread messages outside any batch so they count as new.
+           (dolist (msg unread)
+             (incf total) (incf sent)
+             (bouncer--send-backlog-message client msg server-time-p nil)
+             (when (zerop (mod sent 20)) (sleep 0.02)))
+           ;; Small delay between buffers to let client process
+           (when capped (sleep 0.05)))))
+     (bouncer-buffers bouncer))
     (when (plusp total)
       (cloak-log "[CLoak] Played back ~d messages for ~a~%" total user-name))
     ;; Update playback timestamp
@@ -765,21 +837,66 @@ Throttled to avoid overwhelming single-threaded clients (e.g. Emacs)."
           (declare (ignore line))
           (bouncer--handle-client-auth bouncer client msg))))
 
+(defparameter *downstream-caps* '("server-time" "message-tags" "batch")
+  "IRCv3 capabilities CLoak offers to downstream clients. server-time lets
+clients render replayed backlog at its original time (so it is not all marked
+new); batch lets them treat the backlog block as history.")
+
+(defun bouncer--handle-client-cap (client msg)
+  "Handle a CAP subcommand from a client during registration.
+Returns T if the client just finished negotiation (CAP END) and auth should
+proceed, NIL otherwise."
+  (let* ((params (cloak.protocol:irc-message-params msg))
+         (subcmd (first params)))
+    (cond
+      ((string-equal subcmd "LS")
+       (setf (client-cap-negotiating-p client) t)
+       (client-send client
+                    (format nil ":CLoak CAP * LS :~{~a~^ ~}" *downstream-caps*))
+       nil)
+      ((string-equal subcmd "REQ")
+       (setf (client-cap-negotiating-p client) t)
+       (let* ((req-str (or (second params) ""))
+              (requested (remove "" (split-sequence:split-sequence #\Space req-str)
+                                 :test #'string=)))
+         (if (and requested
+                  (every (lambda (c) (member c *downstream-caps* :test #'string-equal))
+                         requested))
+             (progn
+               (dolist (c requested)
+                 (pushnew c (client-caps client) :test #'string-equal))
+               (client-send client (format nil ":CLoak CAP * ACK :~a" req-str)))
+             (client-send client (format nil ":CLoak CAP * NAK :~a" req-str))))
+       nil)
+      ((string-equal subcmd "LIST")
+       (client-send client
+                    (format nil ":CLoak CAP * LIST :~{~a~^ ~}" (client-caps client)))
+       nil)
+      ((string-equal subcmd "END")
+       (setf (client-cap-negotiating-p client) nil)
+       t)
+      (t nil))))
+
 (defun bouncer--handle-client-auth (bouncer client msg)
   "Process authentication from a new CLIENT."
   (let ((command (cloak.protocol:irc-message-command msg)))
-    ;; Handle CAP negotiation during registration
+    ;; Handle CAP negotiation during registration. Auth is deferred until the
+    ;; client sends CAP END so that negotiated caps (server-time, batch) are
+    ;; known before the attach burst and backlog playback are sent.
     (when (string= command "CAP")
-      (let ((subcmd (first (cloak.protocol:irc-message-params msg))))
-        (cond
-          ((string-equal subcmd "LS")
-           ;; Respond with empty capability list
-           (client-send client ":CLoak CAP * LS :"))
-          ((string-equal subcmd "END")
-           ;; Client finished cap negotiation, nothing to do
-           nil)))
+      (when (and (bouncer--handle-client-cap client msg)
+                 (client-user-received-p client))
+        (bouncer--try-client-auth bouncer client))
       (return-from bouncer--handle-client-auth))
     (when (string= command "USER")
+      (setf (client-user-received-p client) t)
+      ;; If the client is still negotiating caps, wait for CAP END.
+      (unless (client-cap-negotiating-p client)
+        (bouncer--try-client-auth bouncer client)))))
+
+(defun bouncer--try-client-auth (bouncer client)
+  "Validate credentials for CLIENT and attach, or reject."
+  (block nil
       ;; Try to authenticate - PASS should contain user/network:password
       (let* ((pass-data (or (client-user client) ""))
              (slash-pos (position #\/ pass-data))
@@ -807,4 +924,4 @@ Throttled to avoid overwhelming single-threaded clients (e.g. Emacs)."
                 (bouncer--client-ip client))
               (client-send client
                            ":CLoak NOTICE * :Use PASS user/network:password to authenticate")
-              (client-disconnect client)))))))
+              (client-disconnect client))))))

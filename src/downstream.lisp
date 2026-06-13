@@ -17,6 +17,12 @@
             :documentation "Which upstream network this client is attached to.")
    (last-playback :initform 0 :accessor client-last-playback
                   :documentation "Universal time of last buffer playback.")
+   (caps :initform nil :accessor client-caps
+         :documentation "IRCv3 capabilities the client successfully negotiated (e.g. server-time, batch).")
+   (cap-negotiating-p :initform nil :accessor client-cap-negotiating-p
+                      :documentation "T while the client is mid CAP negotiation (between CAP LS and CAP END).")
+   (user-received-p :initform nil :accessor client-user-received-p
+                    :documentation "T once the USER command has been received; auth completes once CAP negotiation also ends.")
    (read-thread :initform nil :accessor client-read-thread)
    (lock :initform (bt:make-lock "client-lock") :accessor client-lock)
    ;; Callbacks

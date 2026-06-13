@@ -502,3 +502,122 @@
         (is (search "353" written))
         (is (search "366" written))
         (is (search "End of /NAMES" written))))))
+
+;;; --- server-time / CAP negotiation ---
+
+(test cap-ls-advertises-server-time
+  "CAP LS advertises server-time so clients can render backlog as dated."
+  (let* ((bouncer (make-relay-bouncer))
+         (output (make-string-output-stream))
+         (client (make-instance 'cloak.downstream:downstream-client
+                   :socket nil :stream output)))
+    (setf (cloak.downstream:client-message-handler client)
+          (lambda (client line msg)
+            (declare (ignore line))
+            (cloak.bouncer::bouncer--handle-client-auth bouncer client msg)))
+    (cloak.downstream::client--handle-line client "CAP LS 302")
+    (let ((written (get-output-stream-string output)))
+      (is (search "server-time" written))
+      (is (search "batch" written)))))
+
+(test cap-req-acks-and-stores-caps
+  "CAP REQ for offered caps is ACKed and recorded on the client."
+  (let* ((bouncer (make-relay-bouncer))
+         (output (make-string-output-stream))
+         (client (make-instance 'cloak.downstream:downstream-client
+                   :socket nil :stream output)))
+    (setf (cloak.downstream:client-message-handler client)
+          (lambda (client line msg)
+            (declare (ignore line))
+            (cloak.bouncer::bouncer--handle-client-auth bouncer client msg)))
+    (cloak.downstream::client--handle-line client "CAP REQ :server-time batch")
+    (let ((written (get-output-stream-string output)))
+      (is (search "ACK" written)))
+    (is (member "server-time" (cloak.downstream:client-caps client)
+                :test #'string-equal))
+    (is (member "batch" (cloak.downstream:client-caps client)
+                :test #'string-equal))))
+
+;;; --- Tag augmentation ---
+
+(test augment-tags-adds-time-to-plain-line
+  "bouncer--augment-tags prepends a tag block to a tagless line."
+  (let ((out (cloak.bouncer::bouncer--augment-tags
+              ":alice!a@b PRIVMSG #test :hi"
+              '(("time" . "2011-10-19T16:40:51.000Z")))))
+    (is (eql 0 (search "@time=2011-10-19T16:40:51.000Z " out)))
+    (is (search ":alice!a@b PRIVMSG #test :hi" out))))
+
+(test augment-tags-does-not-duplicate-existing-key
+  "bouncer--augment-tags leaves an already-present key untouched."
+  (let ((out (cloak.bouncer::bouncer--augment-tags
+              "@time=2000-01-01T00:00:00.000Z :a!a@b PRIVMSG #c :x"
+              '(("time" . "2011-10-19T16:40:51.000Z")))))
+    (is (search "time=2000-01-01T00:00:00.000Z" out))
+    (is (not (search "2011-10-19" out)))))
+
+(test augment-tags-merges-with-existing-tags
+  "bouncer--augment-tags keeps existing tags and adds new ones."
+  (let ((out (cloak.bouncer::bouncer--augment-tags
+              "@msgid=abc :a!a@b PRIVMSG #c :x"
+              '(("time" . "2011-10-19T16:40:51.000Z")))))
+    (is (search "msgid=abc" out))
+    (is (search "time=2011-10-19T16:40:51.000Z" out))))
+
+(test server-time-tag-formats-utc
+  "bouncer--server-time-tag renders ISO-8601 UTC."
+  (is (string= "2011-10-19T16:40:51.000Z"
+               (cloak.bouncer::bouncer--server-time-tag
+                (encode-universal-time 51 40 16 19 10 2011 0)))))
+
+;;; --- Playback: server-time + unread split ---
+
+(test playback-tags-backlog-with-server-time
+  "Clients that negotiated server-time get @time tags on backlog."
+  (let ((bouncer (make-relay-bouncer)))
+    (let ((buf (cloak.buffer:make-message-buffer :capacity 100)))
+      (cloak.buffer:buffer-push buf ":alice!a@b PRIVMSG #test :hello"
+                                nil (encode-universal-time 0 0 12 1 1 2020 0))
+      (setf (gethash "tester/testnet/#test" (cloak.bouncer:bouncer-buffers bouncer))
+            buf))
+    (let* ((output (make-string-output-stream))
+           (client (make-instance 'cloak.downstream:downstream-client
+                     :socket nil :stream output)))
+      (setf (cloak.downstream:client-user client) "tester")
+      (setf (cloak.downstream:client-network client) "testnet")
+      (setf (cloak.downstream:client-caps client) '("server-time"))
+      (setf (cloak.downstream:client-last-playback client) 0)
+      (cloak.bouncer:playback-buffer bouncer client "tester" "testnet")
+      (let ((written (get-output-stream-string output)))
+        (is (search "@time=" written))
+        (is (search "hello" written))))))
+
+(test playback-splits-context-and-unread
+  "Seen messages go in a znc.in/playback BATCH; newer ones are sent outside it."
+  (let ((bouncer (make-relay-bouncer))
+        (old-time (encode-universal-time 0 0 12 1 1 2020 0))
+        (new-time (encode-universal-time 0 0 12 2 1 2020 0)))
+    (let ((buf (cloak.buffer:make-message-buffer :capacity 100)))
+      (cloak.buffer:buffer-push buf ":alice!a@b PRIVMSG #test :seen-msg" nil old-time)
+      (cloak.buffer:buffer-push buf ":bob!b@c PRIVMSG #test :unread-msg" nil new-time)
+      (setf (gethash "tester/testnet/#test" (cloak.bouncer:bouncer-buffers bouncer))
+            buf))
+    (let* ((output (make-string-output-stream))
+           (client (make-instance 'cloak.downstream:downstream-client
+                     :socket nil :stream output)))
+      (setf (cloak.downstream:client-user client) "tester")
+      (setf (cloak.downstream:client-network client) "testnet")
+      (setf (cloak.downstream:client-caps client) '("server-time" "batch"))
+      ;; Mark everything up to a point between the two messages as already seen.
+      (setf (cloak.downstream:client-last-playback client) (1+ old-time))
+      (cloak.bouncer:playback-buffer bouncer client "tester" "testnet")
+      (let ((written (get-output-stream-string output)))
+        (is (search "BATCH +" written))
+        (is (search "znc.in/playback" written))
+        (is (search "BATCH -" written))
+        (is (search "seen-msg" written))
+        (is (search "unread-msg" written))
+        ;; The unread message is delivered after the batch closes.
+        (let ((batch-end (search "BATCH -" written))
+              (unread-pos (search "unread-msg" written)))
+          (is (and batch-end unread-pos (> unread-pos batch-end))))))))

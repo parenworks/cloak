@@ -156,6 +156,9 @@
    #:client-authenticated-p
    #:client-network
    #:client-last-playback
+   #:client-caps
+   #:client-cap-negotiating-p
+   #:client-user-received-p
    #:client-message-handler
    #:client-disconnect-handler
    ;; Listener
