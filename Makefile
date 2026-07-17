@@ -1,4 +1,6 @@
 SBCL ?= sbcl
+WEB ?= 1
+CLOAK_SYSTEM = $(if $(filter 0 no false,$(WEB)),cloak,cloak/web)
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SERVICEDIR = /etc/systemd/system
@@ -13,7 +15,7 @@ all: build
 
 build: ## Build the CLoak executable
 	@echo "Building CLoak v$(VERSION)..."
-	$(SBCL) --non-interactive --load build.lisp
+	CLOAK_SYSTEM=$(CLOAK_SYSTEM) $(SBCL) --non-interactive --load build.lisp
 	@echo "Built: $(BINARY)"
 	@ls -lh $(BINARY)
 

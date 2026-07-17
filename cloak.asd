@@ -22,10 +22,7 @@ built with Fluxion."
                "ironclad"
                "local-time"
                "cl-json"
-               "spinneret"
-               "fluxion"
-               "fluxion/client"
-               "woo")
+               "spinneret")
   :serial t
   :components
   ((:module "src"
@@ -40,14 +37,23 @@ built with Fluxion."
      (:file "bouncer")
      (:file "modules")
      (:file "modules-builtin")
-     (:file "main")))
-   (:module "web"
+     (:file "main"))))
+  :in-order-to ((test-op (test-op "cloak/test"))))
+
+(defsystem "cloak/web"
+  :depends-on ("cloak"
+               "spinneret"
+               "fluxion"
+               "fluxion/client"
+               "woo")
+  :serial t
+  :components
+  ((:module "web"
     :serial t
     :components
     ((:file "package")
      (:file "components")
-     (:file "app"))))
-  :in-order-to ((test-op (test-op "cloak/test"))))
+     (:file "app")))))
 
 (defsystem "cloak/test"
   :depends-on ("cloak" "fiveam")

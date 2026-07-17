@@ -7,11 +7,12 @@
 (push #P"./" asdf:*central-registry*)
 
 ;; Load all dependencies
-(ql:quickload "cloak" :silent t)
-
-;; Ensure Clack handler is fully loaded (Clack lazy-loads handlers
-;; at runtime via ASDF/Quicklisp which fails in standalone images)
-(ql:quickload "clack-handler-hunchentoot" :silent t)
+(let ((system (or (uiop:getenv "CLOAK_SYSTEM") "cloak/web")))
+  (ql:quickload system :silent t)
+  ;; Ensure Clack handler is fully loaded (Clack lazy-loads handlers
+  ;; at runtime via ASDF/Quicklisp which fails in standalone images)
+  (when (string= system "cloak/web")
+    (ql:quickload "clack-handler-hunchentoot" :silent t)))
 
 ;; Ensure output directory exists
 (ensure-directories-exist #P"bin/")

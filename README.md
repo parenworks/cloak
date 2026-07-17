@@ -1,6 +1,6 @@
 # CLoak
 
-An IRC bouncer written in Common Lisp with a [Fluxion](https://github.com/glenneth1/Fluxion) web admin interface.
+An IRC bouncer written in Common Lisp with a [Fluxion](https://github.com/parenworks/Fluxion) web admin interface.
 
 ## What is CLoak?
 
@@ -65,14 +65,44 @@ Edit IRC listener settings (host, port, TLS), web admin binding, and log level d
 
 - SBCL (or CCL)
 - Quicklisp
-- [Fluxion](https://github.com/glenneth1/Fluxion)
+- [Fluxion](https://github.com/parenworks/Fluxion) (optional, for the web admin)
 
 ## Quick Start
 
+For a headless bouncer:
+
 ```lisp
 (ql:quickload "cloak")
+(cloak:start :web nil)
+```
+
+To include the web admin, clone Fluxion into Quicklisp's local projects and load the web system:
+
+```bash
+git clone https://github.com/parenworks/Fluxion.git ~/quicklisp/local-projects/fluxion
+```
+
+```lisp
+(ql:register-local-projects)
+(ql:quickload "cloak/web")
 (cloak:start)
 ```
+
+The web admin will be available at `http://127.0.0.1:8076` by default.
+
+To build a standalone executable with the web admin:
+
+```bash
+make build
+```
+
+To build a headless executable without Fluxion or web-server dependencies:
+
+```bash
+make build WEB=0
+```
+
+Both commands produce `bin/cloak`.
 
 Configure your IRC client to connect to CLoak:
 - **Server**: localhost (or your server IP)

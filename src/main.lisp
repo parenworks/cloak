@@ -30,16 +30,21 @@ client listener, and optionally the web admin interface."
       (cloak.bouncer:start-bouncer bouncer)
       ;; Start web admin if requested
       (when web
-        (funcall (uiop:find-symbol* '#:start-web-admin '#:cloak.web)
-                 (cloak.config:config-web-host config)
-                 (cloak.config:config-web-port config)))
+        (let ((web-package (find-package '#:cloak.web)))
+          (if web-package
+              (funcall (find-symbol "START-WEB-ADMIN" web-package)
+                       (cloak.config:config-web-host config)
+                       (cloak.config:config-web-port config))
+              (cloak-log "[CLoak] Web admin unavailable; load cloak/web to enable it~%"))))
       bouncer)))
 
 (defun stop ()
   "Stop the running CLoak bouncer."
-  (cloak-log "[CLoak] Stopping web admin~%")
-  (ignore-errors
-    (funcall (uiop:find-symbol* '#:stop-web-admin '#:cloak.web)))
+  (let ((web-package (find-package '#:cloak.web)))
+    (when web-package
+      (cloak-log "[CLoak] Stopping web admin~%")
+      (ignore-errors
+        (funcall (find-symbol "STOP-WEB-ADMIN" web-package)))))
   (when cloak.bouncer:*bouncer*
     (cloak.bouncer:stop-bouncer cloak.bouncer:*bouncer*)))
 
