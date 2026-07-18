@@ -165,6 +165,10 @@ Buffer it and relay to any attached clients."
             (when (and (client-authenticated-p client)
                        (string-equal (client-user client) user-name)
                        (string-equal (client-network client) network-name))
+              (when (and (string= command "NICK")
+                         (string-equal (or (first (cloak.protocol:irc-message-params msg)) "")
+                                       (upstream-nick upstream)))
+                (setf (client-nick client) (upstream-nick upstream)))
               (client-send client raw-line))))))))
 
 (defun bouncer--message-target (msg our-nick)
@@ -216,7 +220,17 @@ Run on a dedicated thread so it does not block the client read loop."
       ;; Send full registration burst so strict clients (e.g. Revolution IRC)
       ;; consider registration complete. Many clients wait for 004 + end-of-MOTD.
       (let ((nick (upstream-nick upstream))
+            (username (or (cloak.upstream:upstream-username upstream)
+                          (upstream-nick upstream)))
             (srv (or (cloak.upstream:upstream-server-name upstream) "CLoak")))
+        (unless (string-equal (or (client-nick client) "") nick)
+          (when (client-nick client)
+            (client-send client
+                         (format nil ":~a!~a@CLoak NICK :~a"
+                                 (client-nick client)
+                                 (or (client-ident client) username)
+                                 nick)))
+          (setf (client-nick client) nick))
         (client-send client
                      (format nil ":CLoak 001 ~a :Welcome to CLoak bouncer ~a" nick nick))
         (client-send client
@@ -259,7 +273,9 @@ Run on a dedicated thread so it does not block the client read loop."
           (client-send client
                        (format nil ":~a!~a@CLoak JOIN ~a"
                                (upstream-nick upstream)
-                               user-name chan))
+                               (or (cloak.upstream:upstream-username upstream)
+                                   (upstream-nick upstream))
+                               chan))
           ;; Send NAMES (353) for this channel
           (let ((nicks-ht (gethash chan (upstream-channel-nicks upstream))))
             (when nicks-ht
@@ -335,6 +351,13 @@ Run on a dedicated thread so it does not block the client read loop."
             (let ((target (first (cloak.protocol:irc-message-params msg))))
               (string-equal target "*status")))
        (bouncer--handle-status bouncer user-name client msg))
+      ((and (string= command "NICK") upstream)
+       (let ((nick (upstream-nick upstream))
+             (requested (or (first (cloak.protocol:irc-message-params msg)) "*")))
+         (setf (client-nick client) nick)
+         (client-send client
+                      (format nil ":CLoak 437 ~a ~a :Nickname changes are disabled on this shared connection"
+                              nick requested))))
       ;; JOIN - handle duplicate detection and config persistence
       ((and (string= command "JOIN") upstream)
        (let* ((channels-str (first (cloak.protocol:irc-message-params msg)))
@@ -344,7 +367,10 @@ Run on a dedicated thread so it does not block the client read loop."
                ;; Already in channel - replay state to client instead of forwarding
                (client-send client
                             (format nil ":~a!~a@CLoak JOIN ~a"
-                                    (upstream-nick upstream) user-name chan))
+                                    (upstream-nick upstream)
+                                    (or (cloak.upstream:upstream-username upstream)
+                                        (upstream-nick upstream))
+                                    chan))
                ;; New channel - forward to upstream and persist to autojoin
                (progn
                  (upstream-send upstream (format nil "JOIN ~a" chan))
@@ -443,8 +469,9 @@ Run on a dedicated thread so it does not block the client read loop."
          ;; Buffer our own outgoing message (server won't echo it back)
          (let* ((target (first (cloak.protocol:irc-message-params msg)))
                 (nick (upstream-nick upstream))
+                (username (or (cloak.upstream:upstream-username upstream) nick))
                 (mirror-line (format nil ":~a!~a@CLoak ~a ~a :~a"
-                                     nick user-name command target
+                                     nick username command target
                                      (second (cloak.protocol:irc-message-params msg))))
                 (buffer (bouncer--get-buffer bouncer user-name network target)))
            (buffer-push buffer mirror-line)

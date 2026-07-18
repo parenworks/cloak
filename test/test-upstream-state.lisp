@@ -9,12 +9,12 @@
 ;;; --- Helpers ---
 
 (defun make-state-upstream (&key (nick "testbot") (alt-nick nil) (sasl nil)
-                                  (password nil))
+                                  (sasl-account nil) (password nil))
   "Create an upstream for state testing (not connected to a real server)."
   (let* ((net-cfg (make-instance 'cloak.config:network-config
                     :name "testnet" :server "irc.test" :port 6667
                     :tls nil :nick nick :alt-nick alt-nick
-                    :sasl sasl :password password
+                    :sasl sasl :sasl-account sasl-account :password password
                     :autojoin '("#test")))
          (upstream (cloak.upstream:make-upstream net-cfg)))
     (setf (cloak.upstream:upstream-state upstream) :registering)
@@ -123,6 +123,32 @@
                  ":server CAP * NAK :sasl")))
       (cloak.upstream::upstream--handle-cap up msg))
     (is (eq :done (cloak.upstream::upstream-cap-state up)))))
+
+(test upstream-sasl-uses-configured-account
+  "SASL PLAIN authenticates with the configured services account."
+  (let* ((up (make-state-upstream :nick "display-nick" :sasl :plain
+                                  :sasl-account "services-account" :password "secret"))
+         (output (make-string-output-stream))
+         (payload (format nil "~cservices-account~csecret" #\Nul #\Nul))
+         (expected (cl-base64:string-to-base64-string payload)))
+    (setf (cloak.upstream::upstream-stream up) output)
+    (cloak.upstream::upstream--handle-authenticate
+     up (cloak.protocol:parse-message "AUTHENTICATE +"))
+    (is (search (format nil "AUTHENTICATE ~a" expected)
+                (get-output-stream-string output)))))
+
+(test upstream-sasl-account-falls-back-to-nick
+  "Existing configs without a SASL account continue to use the nick."
+  (let* ((up (make-state-upstream :nick "display-nick" :sasl :plain
+                                  :password "secret"))
+         (output (make-string-output-stream))
+         (payload (format nil "~cdisplay-nick~csecret" #\Nul #\Nul))
+         (expected (cl-base64:string-to-base64-string payload)))
+    (setf (cloak.upstream::upstream-stream up) output)
+    (cloak.upstream::upstream--handle-authenticate
+     up (cloak.protocol:parse-message "AUTHENTICATE +"))
+    (is (search (format nil "AUTHENTICATE ~a" expected)
+                (get-output-stream-string output)))))
 
 (test upstream-sasl-903-ends-cap
   "SASL success (903) ends CAP negotiation."

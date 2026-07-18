@@ -133,6 +133,7 @@ Edit it manually or through the web admin at `http://localhost:8076`.
      :tls t
      :nick "glenneth"
      :sasl :plain
+     :sasl-account "glenneth"
      :autojoin ("#lisp" "#emacs" "#commonlisp"))))))
 ```
 

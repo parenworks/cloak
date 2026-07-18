@@ -28,9 +28,10 @@
     (is (string= "CLoak User" (cloak.config:network-realname net)))
     (is (null (cloak.config:network-password net)))
     (is (null (cloak.config:network-sasl net)))
+    (is (null (cloak.config:network-sasl-account net)))
     (is (null (cloak.config:network-alt-nick net)))
     (is (null (cloak.config:network-autojoin net)))
-    (is (= 500 (cloak.config:network-buffer-size net)))
+    (is (= 5000 (cloak.config:network-buffer-size net)))
     (is (null (cloak.config:network-block-motd net)))))
 
 (test user-config-defaults
@@ -78,7 +79,7 @@
                 :name "libera" :server "irc.libera.chat" :port 6697
                 :tls t :nick "user" :username "myident"
                 :realname "Real Name" :password "pass123"
-                :sasl :plain :alt-nick "user_"
+                :sasl :plain :sasl-account "services-account" :alt-nick "user_"
                 :autojoin '("#lisp" "#test") :buffer-size 1000
                 :block-motd t))
          (user (make-instance 'cloak.config:user-config
@@ -122,6 +123,7 @@
         (is (string= "Real Name" (cloak.config:network-realname n)))
         (is (string= "pass123" (cloak.config:network-password n)))
         (is (eq :plain (cloak.config:network-sasl n)))
+        (is (string= "services-account" (cloak.config:network-sasl-account n)))
         (is (string= "user_" (cloak.config:network-alt-nick n)))
         (is (equal '("#lisp" "#test") (cloak.config:network-autojoin n)))
         (is (= 1000 (cloak.config:network-buffer-size n)))

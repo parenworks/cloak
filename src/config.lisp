@@ -55,6 +55,8 @@
              :initform nil)
    (sasl :initarg :sasl :accessor network-sasl
          :initform nil)
+   (sasl-account :initarg :sasl-account :accessor network-sasl-account
+                 :initform nil)
    (alt-nick :initarg :alt-nick :accessor network-alt-nick
              :initform nil
              :documentation "Alternate nick if primary is taken.")
@@ -97,6 +99,7 @@
         :realname (network-realname net)
         :password (network-password net)
         :sasl (network-sasl net)
+        :sasl-account (network-sasl-account net)
         :alt-nick (network-alt-nick net)
         :autojoin (network-autojoin net)
         :buffer-size (network-buffer-size net)
@@ -135,6 +138,7 @@
     :realname (or (getf plist :realname) "CLoak User")
     :password (getf plist :password)
     :sasl (getf plist :sasl)
+    :sasl-account (getf plist :sasl-account)
     :alt-nick (getf plist :alt-nick)
     :autojoin (getf plist :autojoin)
     :buffer-size (or (getf plist :buffer-size) 5000)

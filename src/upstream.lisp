@@ -329,10 +329,11 @@ When QUIT is true, send QUIT first for a clean shutdown."
   (let ((param (first (irc-message-params msg))))
     (when (string= param "+")
       (let* ((config (upstream-config upstream))
-             (nick (upstream-nick upstream))
+             (account (or (cloak.config:network-sasl-account config)
+                          (upstream-nick upstream)))
              (password (or (cloak.config:network-password config) ""))
-             ;; SASL PLAIN: \0nick\0password
-             (payload (format nil "~a~c~a~c~a" nick #\Nul nick #\Nul password))
+             ;; SASL PLAIN: \0account\0password
+             (payload (format nil "~c~a~c~a" #\Nul account #\Nul password))
              (encoded (cl-base64:string-to-base64-string payload)))
         (upstream-send upstream (format nil "AUTHENTICATE ~a" encoded))))))
 

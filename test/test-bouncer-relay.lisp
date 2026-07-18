@@ -12,7 +12,8 @@
   "Create a bouncer with one user/network for relay testing."
   (let* ((net (make-instance 'cloak.config:network-config
                 :name "testnet" :server "irc.test" :port 6667
-                :tls nil :nick "botnick" :autojoin '("#test")))
+                :tls nil :nick "botnick" :username "botident"
+                :autojoin '("#test")))
          (user (make-instance 'cloak.config:user-config
                  :name "tester"
                  :password-hash (cloak.config:hash-password "secret")
@@ -165,6 +166,50 @@
 
 ;;; --- Client -> Upstream Relay ---
 
+(test attach-synchronizes-nick-and-upstream-username
+  "Attach changes the client nick and uses the upstream ident in synthetic state."
+  (let ((bouncer (make-relay-bouncer)))
+    (multiple-value-bind (client output)
+        (make-attached-client bouncer)
+      (setf (cloak.downstream:client-ident client) "clientident")
+      (cloak.bouncer::bouncer--send-attach-burst
+       bouncer client "tester" "testnet")
+      (let ((written (get-output-stream-string output)))
+        (is (string= "botnick" (cloak.downstream:client-nick client)))
+        (is (search ":clientnick!clientident@CLoak NICK :botnick" written))
+        (is (search ":botnick!botident@CLoak JOIN #test" written))))))
+
+(test relay-upstream-nick-change-synchronizes-client
+  "An accepted upstream NICK change updates downstream client state."
+  (let ((bouncer (make-relay-bouncer)))
+    (multiple-value-bind (client output)
+        (make-attached-client bouncer)
+      (let* ((upstream (get-upstream bouncer))
+             (raw ":botnick!botident@host NICK botnick_")
+             (msg (cloak.protocol:parse-message raw)))
+        (cloak.upstream::upstream--track-state upstream msg)
+        (cloak.bouncer::bouncer--on-upstream-message
+         bouncer "tester" upstream raw msg)
+        (is (string= "botnick_" (cloak.downstream:client-nick client)))
+        (is (search raw (get-output-stream-string output)))))))
+
+(test relay-client-nick-change-rejected
+  "A downstream NICK cannot change the shared upstream nickname."
+  (let ((bouncer (make-relay-bouncer)))
+    (multiple-value-bind (client output)
+        (make-attached-client bouncer)
+      (let* ((upstream (get-upstream bouncer))
+             (upstream-output (make-string-output-stream))
+             (raw "NICK clientnick")
+             (msg (cloak.protocol:parse-message raw)))
+        (setf (cloak.upstream::upstream-stream upstream) upstream-output)
+        (cloak.bouncer::bouncer--on-client-message
+         bouncer "tester" client raw msg)
+        (is (string= "botnick" (cloak.downstream:client-nick client)))
+        (is (search " 437 botnick clientnick "
+                    (get-output-stream-string output)))
+        (is (string= "" (get-output-stream-string upstream-output)))))))
+
 (test relay-client-quit-detaches
   "QUIT from client detaches rather than forwarding."
   (let ((bouncer (make-relay-bouncer)))
@@ -302,6 +347,9 @@
     (cloak.downstream::client--handle-line client "USER myident 0 * :Real Name")
     ;; Should be authenticated
     (is (eq t (cloak.downstream:client-authenticated-p client)))
+    (loop repeat 100
+          until (plusp (cloak.downstream:client-last-playback client))
+          do (sleep 0.01))
     ;; Should have received welcome
     (let ((written (get-output-stream-string output)))
       (is (search "001" written))
@@ -427,8 +475,8 @@
 ;;; --- Server Noise Detection ---
 
 (test server-noise-server-notice
-  "NOTICE from server (no !) is server noise."
-  (let ((msg (cloak.protocol:parse-message ":irc.server.com NOTICE * :Looking up host")))
+  "Routine hostname lookup NOTICE from a server is server noise."
+  (let ((msg (cloak.protocol:parse-message ":irc.server.com NOTICE * :Looking up your hostname")))
     (is (cloak.bouncer::bouncer--server-noise-p "NOTICE" msg))))
 
 (test server-noise-nickserv

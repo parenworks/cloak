@@ -36,6 +36,7 @@
    #:network-realname
    #:network-password
    #:network-sasl
+   #:network-sasl-account
    #:network-alt-nick
    #:network-autojoin
    #:network-buffer-size
@@ -128,6 +129,7 @@
    #:upstream-connected-p
    #:upstream-state
    #:upstream-nick
+   #:upstream-username
    #:upstream-network-name
    #:upstream-channels
    #:upstream-channel-nicks

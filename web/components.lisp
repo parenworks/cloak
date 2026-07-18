@@ -597,6 +597,11 @@
                       (:option :value "" :selected (unless (config:network-sasl net-cfg) "selected") "None")
                       (:option :value "plain" :selected (when (string-equal "plain" (config:network-sasl net-cfg)) "selected") "PLAIN")))
                   (:div :class "form-group"
+                    (:label :class "form-label" "SASL Account")
+                    (:input :class "form-input" :type "text" :name "sasl-account"
+                            :value (or (config:network-sasl-account net-cfg) "")
+                            :placeholder "defaults to nick"))
+                  (:div :class "form-group"
                     (:label :class "form-label" "Buffer Size")
                     (:input :class "form-input" :type "number" :name "buffer-size"
                             :value (format nil "~d" (config:network-buffer-size net-cfg))))
