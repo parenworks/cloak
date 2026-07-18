@@ -22,9 +22,8 @@ build: ## Build the CLoak executable
 test: ## Run the test suite
 	$(SBCL) --non-interactive \
 		--eval '(push #P"./" asdf:*central-registry*)' \
-		--eval '(ql:quickload "cloak" :silent t)' \
-		--eval '(asdf:test-system "cloak")' \
-		--eval '(uiop:quit (if (fiveam:run-all-tests) 0 1))'
+		--eval '(ql:quickload "cloak/test" :silent t)' \
+		--eval '(uiop:quit (if (fiveam:run! :cloak-tests) 0 1))'
 
 clean: ## Remove build artifacts
 	rm -rf bin/

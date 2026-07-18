@@ -25,6 +25,22 @@
   (let ((msg (cloak.protocol:parse-message raw-line)))
     (cloak.upstream::upstream--track-state upstream msg)))
 
+(test upstream-send-redacts-credentials-in-log
+  "Outbound PASS and SASL payloads are not written to logs."
+  (let* ((up (make-state-upstream))
+         (stream (make-string-output-stream))
+         (log-output (make-string-output-stream)))
+    (setf (cloak.upstream::upstream-stream up) stream)
+    (let ((*standard-output* log-output))
+      (cloak.upstream:upstream-send up "PASS server-secret")
+      (cloak.upstream:upstream-send up "AUTHENTICATE encoded-secret"))
+    (let ((logged (get-output-stream-string log-output))
+          (written (get-output-stream-string stream)))
+      (is (not (search "server-secret" logged)))
+      (is (not (search "encoded-secret" logged)))
+      (is (search "PASS server-secret" written))
+      (is (search "AUTHENTICATE encoded-secret" written)))))
+
 ;;; --- Registration and State Transitions ---
 
 (test upstream-initial-state

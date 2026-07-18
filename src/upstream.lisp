@@ -146,7 +146,14 @@ When QUIT is true, send QUIT first for a clean shutdown."
           (sleep (- min-interval elapsed))))
       (setf (upstream-last-send-time upstream) (get-internal-real-time))
       (unless (string= (subseq raw-line 0 (min 4 (length raw-line))) "PONG")
-        (cloak-log "[CLoak] >> ~a: ~a~%" (upstream-network-name upstream) raw-line))
+        (let ((logged-line
+                (cond
+                  ((uiop:string-prefix-p "PASS " raw-line) "PASS [REDACTED]")
+                  ((and (uiop:string-prefix-p "AUTHENTICATE " raw-line)
+                        (not (string= raw-line "AUTHENTICATE PLAIN")))
+                   "AUTHENTICATE [REDACTED]")
+                  (t raw-line))))
+          (cloak-log "[CLoak] >> ~a: ~a~%" (upstream-network-name upstream) logged-line)))
       (handler-case
           (progn
             (write-string raw-line (upstream-stream upstream))
