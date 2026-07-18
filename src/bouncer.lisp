@@ -352,12 +352,17 @@ Run on a dedicated thread so it does not block the client read loop."
               (string-equal target "*status")))
        (bouncer--handle-status bouncer user-name client msg))
       ((and (string= command "NICK") upstream)
-       (let ((nick (upstream-nick upstream))
-             (requested (or (first (cloak.protocol:irc-message-params msg)) "*")))
-         (setf (client-nick client) nick)
-         (client-send client
-                      (format nil ":CLoak 437 ~a ~a :Nickname changes are disabled on this shared connection"
-                              nick requested))))
+       (let* ((nick (upstream-nick upstream))
+              (requested (or (first (cloak.protocol:irc-message-params msg)) "*"))
+              (net-cfg (find-network user-name network (bouncer-config bouncer)))
+              (desired (and net-cfg (network-nick net-cfg))))
+         (if (and desired (string-equal requested desired))
+             (upstream-send upstream line)
+             (progn
+               (setf (client-nick client) nick)
+               (client-send client
+                            (format nil ":CLoak 437 ~a ~a :Nickname changes are disabled on this shared connection"
+                                    nick requested))))))
       ;; JOIN - handle duplicate detection and config persistence
       ((and (string= command "JOIN") upstream)
        (let* ((channels-str (first (cloak.protocol:irc-message-params msg)))

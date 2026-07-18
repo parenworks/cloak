@@ -193,6 +193,20 @@
         (is (string= "botnick_" (cloak.downstream:client-nick client)))
         (is (search raw (get-output-stream-string output)))))))
 
+(test relay-client-can-reclaim-configured-nick
+  "A downstream client can request the configured primary upstream nickname."
+  (let ((bouncer (make-relay-bouncer)))
+    (multiple-value-bind (client)
+        (make-attached-client bouncer)
+      (let* ((upstream (get-upstream bouncer))
+             (upstream-output (make-string-output-stream))
+             (raw "NICK botnick")
+             (msg (cloak.protocol:parse-message raw)))
+        (setf (cloak.upstream::upstream-stream upstream) upstream-output)
+        (cloak.bouncer::bouncer--on-client-message
+         bouncer "tester" client raw msg)
+        (is (search raw (get-output-stream-string upstream-output)))))))
+
 (test relay-client-nick-change-rejected
   "A downstream NICK cannot change the shared upstream nickname."
   (let ((bouncer (make-relay-bouncer)))

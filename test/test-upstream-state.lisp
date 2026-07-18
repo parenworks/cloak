@@ -106,6 +106,18 @@
                  ":server CAP * LS :sasl server-time echo-message")))
       (is (cloak.upstream::upstream--handle-cap up msg)))))
 
+(test upstream-cap-ls-recognizes-valued-sasl
+  "CAP LS recognizes SASL when the server advertises mechanism values."
+  (let* ((up (make-state-upstream :sasl :plain :password "pass"))
+         (output (make-string-output-stream))
+         (msg (cloak.protocol:parse-message
+               ":server CAP * LS :server-time sasl=EXTERNAL,PLAIN,SCRAM-SHA-512")))
+    (setf (cloak.upstream::upstream-stream up) output)
+    (cloak.upstream::upstream--handle-cap up msg)
+    (let ((written (get-output-stream-string output)))
+      (is (search "CAP REQ" written))
+      (is (search "sasl" written)))))
+
 (test upstream-cap-ack-stores-enabled
   "CAP ACK stores enabled capabilities."
   (let ((up (make-state-upstream :sasl :plain :password "pass")))

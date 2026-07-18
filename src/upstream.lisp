@@ -229,6 +229,10 @@ When QUIT is true, send QUIT first for a clean shutdown."
 
 ;;; --- CAP Negotiation & SASL ---
 
+(defun upstream--cap-name (cap)
+  (let ((separator (position #\= cap)))
+    (subseq cap 0 (or separator (length cap)))))
+
 (defun upstream--handle-cap (upstream msg)
   "Handle CAP negotiation messages. Return T if consumed."
   (let ((command (irc-message-command msg)))
@@ -239,20 +243,21 @@ When QUIT is true, send QUIT first for a clean shutdown."
        (let* ((cap-str (car (last (irc-message-params msg))))
               (caps (split-sequence:split-sequence #\Space cap-str
                                                    :remove-empty-subseqs t))
+              (cap-names (mapcar #'upstream--cap-name caps))
               (want nil))
          (cloak-log "[CLoak] Server caps: ~{~a~^ ~}~%" caps)
          ;; Request caps we want
-         (when (member "sasl" caps :test #'string-equal)
+         (when (member "sasl" cap-names :test #'string-equal)
            (push "sasl" want))
-         (when (member "server-time" caps :test #'string-equal)
+         (when (member "server-time" cap-names :test #'string-equal)
            (push "server-time" want))
-         (when (member "message-tags" caps :test #'string-equal)
+         (when (member "message-tags" cap-names :test #'string-equal)
            (push "message-tags" want))
-         (when (member "batch" caps :test #'string-equal)
+         (when (member "batch" cap-names :test #'string-equal)
            (push "batch" want))
-         (when (member "labeled-response" caps :test #'string-equal)
+         (when (member "labeled-response" cap-names :test #'string-equal)
            (push "labeled-response" want))
-         (when (member "echo-message" caps :test #'string-equal)
+         (when (member "echo-message" cap-names :test #'string-equal)
            (push "echo-message" want))
          (if want
              (progn
